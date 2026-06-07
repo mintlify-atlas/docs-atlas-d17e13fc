@@ -10,14 +10,14 @@ ESPHome can be installed in three ways: via **pip** (Python's package manager) o
 
 | Requirement | Minimum | Notes |
 |---|---|---|
-| **Python** | 3.9+ | 3.11 or newer recommended |
+| **Python** | 3.11+ | 3.11 or newer required |
 | **pip** | bundled with Python | Used to install ESPHome and dependencies |
 | **RAM** | 512 MB | 1 GB+ recommended for compiling |
 | **Disk** | 2 GB free | PlatformIO toolchain is downloaded on first build |
 | **OS** | Windows 10+, macOS 12+, Linux | Any reasonably modern distribution |
 
 <Note>
-  ESPHome requires Python 3.9 or newer. Check your version with `python3 --version` before installing. Python 3.11 or later is recommended for the best performance and compatibility.
+  ESPHome requires Python 3.11 or newer. Check your version with `python3 --version` before installing.
 </Note>
 
 ## Install via pip
@@ -25,7 +25,7 @@ ESPHome can be installed in three ways: via **pip** (Python's package manager) o
 <CodeGroup>
 ```bash Linux
 # 1. Confirm Python version
-python3 --version  # Should print Python 3.9 or newer
+python3 --version  # Should print Python 3.11 or newer
 
 # 2. Create a virtual environment
 python3 -m venv venv

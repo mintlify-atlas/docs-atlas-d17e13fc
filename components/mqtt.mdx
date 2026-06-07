@@ -1,5 +1,5 @@
 ---
-title: "MQTT Component: Publish Sensor Data to a Broker"
+title: "MQTT Component: Broker Config and Discovery in ESPHome"
 sidebarTitle: "MQTT"
 description: "Connect ESPHome devices to an MQTT broker to publish sensor values and receive commands. Covers broker config, topics, discovery, and TLS."
 ---
@@ -67,6 +67,10 @@ mqtt:
 
 <ParamField path="discovery_object_id_generator" type="string">
   How to generate `object_id` for entities. `device_name` uses `<device_name>_<friendly_name>` to avoid duplicate entity names across devices. Defaults to `none`.
+</ParamField>
+
+<ParamField path="use_abbreviations" type="boolean">
+  Whether to use [abbreviations](https://www.home-assistant.io/docs/mqtt/discovery/) in MQTT discovery messages. Shorter keys reduce payload size. Defaults to `true`.
 </ParamField>
 
 <ParamField path="clean_session" type="boolean">

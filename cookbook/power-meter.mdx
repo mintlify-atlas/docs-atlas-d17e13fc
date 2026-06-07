@@ -1,7 +1,7 @@
 ---
 title: "Build a Whole-Home Power Meter with ESPHome"
 sidebarTitle: "Power Meter"
-description: "Monitor whole-home electricity usage with ESPHome using a CT clamp sensor, ADC input, and the voltage/current/power sensor components."
+description: "Monitor whole-home electricity usage with ESPHome by counting utility-meter LED pulses with a photoresistor or S0 port to report live watts and daily kWh."
 ---
 
 Most utility meters have a small red LED on the front that pulses once for every watt-hour consumed — a standard called the "pulse output" or S0 port. By pointing a photoresistor at that LED (or wiring directly to an exposed S0 terminal), an ESP board can count pulses and translate them into real-time watts and cumulative kilowatt-hours without touching any mains wiring. This recipe walks through the hardware, the ESPHome configuration, and the calibration steps to get accurate readings in Home Assistant.
@@ -76,7 +76,7 @@ api:
       then:
         - pulse_meter.set_total_pulses:
             id: sensor_pulse_meter
-            value: !lambda 'return new_total * 1000;'
+            value: !lambda 'return new_total;'
 
 logger:
 ota:
@@ -176,7 +176,8 @@ sensor:
     The `set_total` API action lets you align the ESPHome cumulative total
     with what your utility meter shows. In Home Assistant, call the
     `esphome.power_meter_set_total` service with `new_total` set to the
-    current meter reading in kWh.
+    raw pulse count you want to restore (not a kWh value — the pulse count is what
+    `pulse_meter` tracks internally; multiply your kWh reading by the impulse constant to convert).
   </Step>
 </Steps>
 
@@ -217,5 +218,5 @@ sensor:
 - [Pulse Meter Sensor](/components/sensor-index)
 - [Pulse Counter Sensor](/components/sensor-index)
 - [Total Daily Energy Sensor](/components/sensor-index)
-- Home Assistant Time Source
+- [Home Assistant Time Source](https://esphome.io/components/time/homeassistant/)
 - [Home Assistant Glow project](https://github.com/klaasnicolaas/home-assistant-glow)

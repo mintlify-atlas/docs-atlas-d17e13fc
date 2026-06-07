@@ -1,5 +1,5 @@
 ---
-title: "Sensor Components in ESPHome: Measuring the World"
+title: "Sensor Components in ESPHome: Measuring the World Accurately"
 sidebarTitle: "Sensors"
 description: "ESPHome sensor components read physical measurements and expose them to Home Assistant. Covers filters, throttling, calibration, and 200+ sensor types."
 ---
@@ -120,6 +120,16 @@ filters:
   - exponential_moving_average:
       alpha: 0.1
       send_every: 15
+  - calibrate_polynomial:         # polynomial curve calibration
+      degree: 2
+      datapoints:
+        - 0.0 -> 0.0
+        - 50.0 -> 48.0
+        - 100.0 -> 99.0
+  - clamp:                       # restrict value to a range
+      min_value: 0.0
+      max_value: 100.0
+  - round: 1                     # round to N decimal places
   - throttle: 10s                # max one update per 10 s
   - throttle_average: 10s        # average over 10 s window, then publish
   - heartbeat: 60s               # publish at least once per 60 s

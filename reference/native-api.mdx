@@ -1,5 +1,5 @@
 ---
-title: "ESPHome Native API: Protobuf TCP Protocol"
+title: "ESPHome Native API: Protobuf TCP Protocol on Port 6053"
 sidebarTitle: "Native API"
 description: "The ESPHome native API uses protobuf over TCP on port 6053 for fast, encrypted communication with Home Assistant and aioesphomeapi clients."
 ---
@@ -101,7 +101,7 @@ api:
 </ParamField>
 
 <ParamField path="max_connections" type="integer">
-  Maximum simultaneous client connections. Defaults to 4 (ESP8266/RP2040) or 5 (ESP32). Each connection uses approximately 500–1000 bytes of RAM.
+  Maximum simultaneous client connections. Defaults to `4` for ESP8266/RP2040, `5` for ESP32 and similar platforms. Each connection uses approximately 500–1000 bytes of RAM.
 </ParamField>
 
 <ParamField path="reboot_timeout" type="time">

@@ -54,7 +54,7 @@ esphome:
 ```
 
 <Note>
-`on_boot` fires every time the ESP restarts — including after an OTA update or a watchdog reset. Use `priority` (range –100 to 600) to order multiple `on_boot` blocks relative to each other.
+`on_boot` fires every time the ESP restarts — including after an OTA update or a watchdog reset. Use `priority` (higher value = runs earlier; common range –100 to 800) to order multiple `on_boot` blocks relative to each other. Default priority is `600`.
 </Note>
 
 ### `on_loop`
@@ -244,9 +244,9 @@ script:
 
 | Mode | Behavior |
 |---|---|
-| `single` | Ignore new calls while already running (default) |
+| `single` | Ignore new calls while already running; issue a warning (default) |
 | `restart` | Stop current run and restart from the top |
-| `queued` | Queue new calls; run them after the current one finishes (max 5 by default) |
+| `queued` | Queue new calls; run them after the current one finishes (max 5 total instances by default) |
 | `parallel` | Run new instances alongside existing ones (unlimited by default) |
 
 **Calling a script:**
@@ -407,8 +407,7 @@ ESPHome will reboot automatically if it cannot reach its API endpoint for an ext
 
 ## See Also
 
-- [Actions, Triggers, and Conditions (full reference)](/guides/automations)
 - [Lambda Templates](/reference/lambda-templates)
-- [Script Component](/guides/automations)
-- [Interval Component](/guides/automations)
-- [Global Variables](/guides/automations)
+- [OTA Updates](/guides/ota-updates)
+- [Packages & Substitutions](/guides/packages-substitutions)
+- [CLI Reference](/reference/cli)

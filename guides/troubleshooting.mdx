@@ -150,7 +150,7 @@ When using the ESP-IDF framework on ESP32, you can also set the framework's inte
 esp32:
   framework:
     type: esp-idf
-    log_level: VERBOSE    # Options: NONE, ERROR, WARN, INFO, DEBUG, VERBOSE
+    log_level: VERBOSE    # Options: NONE, ERROR (default), WARN, INFO, DEBUG, VERBOSE
 ```
 
 ## Common Issues
@@ -300,8 +300,8 @@ It also exposes sensors you can forward to Home Assistant:
 ```yaml
 sensor:
   - platform: debug
-    free_heap:
-      name: "Free Heap"
+    free:
+      name: "Heap Free"
     loop_time:
       name: "Loop Time"
 
@@ -316,8 +316,8 @@ text_sensor:
 ## See Also
 
 - [Logger Component](/components/logger/)
-- Debug Component
-- Runtime Statistics
-- [Safe Mode Component](/guides/ota-updates)
+- [OTA Updates & Safe Mode](/guides/ota-updates)
+- [Automations Guide](/guides/automations)
+- [CLI Reference](/reference/cli)
 - [OTA Updates Guide](/guides/ota-updates/)
 - [Frequently Asked Questions](/guides/faq/)

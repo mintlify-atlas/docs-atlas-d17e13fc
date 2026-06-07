@@ -1,5 +1,5 @@
 ---
-title: "Security Best Practices for ESPHome Devices"
+title: "ESPHome Security Best Practices and Configuration Guide"
 sidebarTitle: "Security"
 description: "Secure your ESPHome devices: use secrets, enable API encryption, configure Wi-Fi minimum auth mode, and restrict OTA access with passwords."
 ---
@@ -127,7 +127,7 @@ ESPHome allows you to enforce a minimum Wi-Fi security protocol. This prevents d
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  min_auth_mode: WPA2   # Reject WEP and open networks
+  min_auth_mode: WPA2   # Reject WPA (TKIP) networks; allow WPA2 and WPA3
 ```
 
 <CardGroup cols={2}>

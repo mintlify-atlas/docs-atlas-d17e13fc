@@ -1,10 +1,10 @@
 ---
-title: "OTA (Over-the-Air) Update Component Reference"
+title: "OTA Updates: Wireless Firmware Flashing in ESPHome"
 sidebarTitle: "OTA"
 description: "Configure ESPHome over-the-air firmware updates: set passwords, enable safe mode, and use the HTTP OTA component for URL-based updates."
 ---
 
-ESPHome supports updating device firmware wirelessly without a physical USB connection. As of ESPHome 2024.6.0, OTA functionality is organized as a *platform component* — each update mechanism is a separate platform under the `ota:` list key. The most common platform is `esphome`, which implements the native OTA protocol used by the ESPHome dashboard and CLI. Additional platforms include `http_request` for pull-based URL updates, `web_server` for browser-based uploads, and `zephyr_mcumgr` for nRF52 boards. Safe mode (automatic recovery) is automatically enabled alongside OTA and can be found at the [Safe Mode](/guides/ota-updates).
+ESPHome supports updating device firmware wirelessly without a physical USB connection. As of ESPHome 2024.6.0, OTA functionality is organized as a *platform component* — each update mechanism is a separate platform under the `ota:` list key. The most common platform is `esphome`, which implements the native OTA protocol used by the ESPHome dashboard and CLI. Additional platforms include `http_request` for pull-based URL updates, `web_server` for browser-based uploads, and `zephyr_mcumgr` for nRF52 boards. Safe mode (automatic recovery) is automatically enabled alongside OTA and can be found at the [Safe Mode](/guides/ota-updates#safe-mode) section below.
 
 ## Minimal Example
 
@@ -144,7 +144,7 @@ ota:
 
 Safe mode is automatically enabled when any OTA platform is configured. It provides a recovery mechanism if a bad firmware update prevents the device from functioning correctly. If the device fails to boot successfully within the configured `boot_is_good_after` window (default 60 seconds), it reverts to a minimal safe-mode firmware that only exposes OTA, allowing you to push a corrected build.
 
-For full safe mode configuration options, see the [Safe Mode](/guides/ota-updates).
+For full safe mode configuration options, see the [Safe Mode Guide](/guides/ota-updates).
 
 <Note>
   OTA updates block the main application loop while in progress. Components that only update their output from `loop()` (e.g. some display drivers) cannot be used to show OTA progress. Use components with direct hardware write capabilities (GPIO LEDs, display components with immediate rendering) for progress indicators.

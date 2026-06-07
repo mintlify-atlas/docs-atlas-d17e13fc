@@ -1,7 +1,7 @@
 ---
-title: "ESPNow: Peer-to-Peer Wireless for ESP Devices"
+title: "ESPNow: Connectionless Peer-to-Peer Wireless for ESP Devices"
 sidebarTitle: "ESPNow"
-description: "Use ESP-NOW protocol for low-latency, connectionless peer-to-peer communication between ESP32 and ESP8266 devices in ESPHome."
+description: "Use ESP-NOW for low-latency, connectionless communication between ESPHome devices without a router — ideal for sensors and buttons."
 ---
 
 The `espnow` component brings Espressif's [ESP-NOW protocol](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/network/esp_now.html) to ESPHome, enabling direct device-to-device communication without Wi-Fi association or a router. ESP-NOW is a connectionless protocol: devices exchange short data packets with very low latency, and a sender doesn't need to maintain a persistent link with the receiver. This makes it ideal for battery-powered sensor nodes, wireless buttons, remote actuators, and any scenario where standard Wi-Fi overhead is undesirable.

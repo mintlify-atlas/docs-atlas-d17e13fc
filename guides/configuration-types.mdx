@@ -1,7 +1,7 @@
 ---
 title: "ESPHome Configuration Types and Variable Reference"
 sidebarTitle: "Config Types"
-description: "Reference for all ESPHome configuration variable types: IDs, pins, pin schemas, time durations, colors, and platform-specific values."
+description: "Complete reference for ESPHome configuration variable types: IDs, pins, pin schemas, time durations, and platform-specific values."
 ---
 
 ESPHome uses a consistent set of configuration variable types across all its components. Understanding these types helps you read component documentation, avoid common errors, and write correct YAML configurations the first time. This page documents every built-in type you will encounter in the ESPHome reference.
@@ -14,10 +14,10 @@ IDs are the primary way ESPHome connects components defined in different parts o
 
 **Naming rules** — IDs are converted into C++ variable names, so they must follow [C++ identifier conventions](https://en.cppreference.com/w/cpp/language/identifiers):
 
-- Must start with a letter (`a`–`z`, `A`–`Z`) or underscore (`_`)
-- Can contain letters, digits, and underscores
-- Cannot contain spaces or special characters other than `_`
-- Cannot be a C++ reserved keyword (e.g., `int`, `class`, `return`)
+- Must start with a letter and can end with numbers
+- Must not have a space in the name
+- Cannot have special characters except the underscore (`_`)
+- Must not be a C++ reserved keyword (e.g., `int`, `class`, `return`)
 - Must be unique within the configuration file
 
 ```yaml
@@ -195,64 +195,6 @@ sensor:
 <Tip>
   When specifying `HH:MM` or `HH:MM:SS` time strings, always wrap them in quotes (`'2:01'`). Without quotes, the YAML parser interprets the colon as a key-value separator and the value will not parse correctly.
 </Tip>
-
----
-
-## Color
-
-Color values appear in display, light, and LED matrix components. ESPHome accepts several formats depending on the component's color model.
-
-**RGB hex** — a `#RRGGBB` string:
-
-```yaml
-color:
-  - id: my_red
-    hex: FF0000
-
-# Or inline
-text_color: "#FF0000"
-```
-
-**RGB components** — separate `red`, `green`, `blue` values from `0` to `255`:
-
-```yaml
-color:
-  - id: my_color
-    red: 255
-    green: 165
-    blue: 0
-```
-
-**RGBW** — adds a `white` channel for LEDs with a dedicated white element:
-
-```yaml
-color:
-  - id: warm_white
-    red: 255
-    green: 200
-    blue: 150
-    white: 200
-```
-
-**Normalized floats** — some components accept `red_int`, `green_int`, `blue_int` as 0–255 integers or `red`, `green`, `blue` as 0.0–1.0 floats, depending on context. Check the individual component documentation.
-
----
-
-## Range Values
-
-Some configuration options accept a **range** — a minimum and maximum numeric boundary. These are expressed as a mapping:
-
-```yaml
-number:
-  - platform: template
-    id: fan_speed
-    min_value: 0
-    max_value: 100
-    step: 5
-    optimistic: true
-```
-
-Range boundaries are inclusive. The `step` value controls the smallest increment the number entity can change by.
 
 ---
 

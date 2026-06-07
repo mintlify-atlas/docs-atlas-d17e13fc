@@ -132,7 +132,7 @@ display:
       it.printf(0, 12, id(font_small), TextAlign::TOP_LEFT, "Temperature");
 
       // ── Clock in HH:MM ─────────────────────────────────────────────────
-      it.strftime(0, 60, id(font_medium), TextAlign::BASELINE_LEFT,
+      it.strftime(0, 60, id(font_large), TextAlign::BASELINE_LEFT,
                   "%H:%M", id(esptime).now());
 
       // ── Inside temperature (top-right) ─────────────────────────────────
@@ -210,6 +210,5 @@ display:
 
 - [SSD1306 Display component](/components/display-index)
 - [Display Rendering Engine](/components/display-index)
-- [Font component](/components/font/)
+- [Font component](/components/font)
 - [Home Assistant Sensor](/components/sensor-index)
-- SNTP Time

@@ -1,5 +1,5 @@
 ---
-title: "Wi-Fi Component: Connect ESPHome to Your Network"
+title: "Wi-Fi Component: Configure ESPHome Wireless Networks"
 sidebarTitle: "Wi-Fi"
 description: "Configure Wi-Fi on your ESPHome device: SSID, password, multiple networks, static IP, power save mode, and captive portal fallback."
 ---
@@ -97,6 +97,10 @@ wifi:
 
 <ParamField path="band_mode" type="string">
   **ESP32-C5 only.** Select the frequency band. Options: `AUTO`, `2.4GHZ`, `5GHZ`. Defaults to `AUTO`.
+</ParamField>
+
+<ParamField path="phy_mode" type="string">
+  **ESP8266 only.** Pin the radio to a specific 802.11 PHY mode. Options: `AUTO`, `11B`, `11G`, `11N`. Defaults to `AUTO`. Use `11G` to work around compatibility issues with some routers that have problems with ESP8266 devices in 802.11n mode.
 </ParamField>
 
 <ParamField path="enable_on_boot" type="boolean">

@@ -48,6 +48,18 @@ api:
   User-defined actions exposed as Home Assistant services (prefixed with `esphome.<node_name>_`). Each action may define `variables` to receive typed parameters from Home Assistant. Supported types: `bool`, `int`, `float`, `string`, and their array variants.
 </ParamField>
 
+<ParamField path="custom_services" type="boolean">
+  Enable compilation of custom API services for external components that register their own services via the `CustomAPIDevice` C++ class. Only needed for external components using this mechanism. Defaults to `false`.
+</ParamField>
+
+<ParamField path="homeassistant_services" type="boolean">
+  Enable compilation of Home Assistant service call support for external components using `CustomAPIDevice::call_homeassistant_service()` or `fire_homeassistant_event()`. Automatically enabled when using `homeassistant.service`, `homeassistant.event`, or the `homeassistant` platform for number or switch. Defaults to `false`.
+</ParamField>
+
+<ParamField path="homeassistant_states" type="boolean">
+  Enable compilation of Home Assistant state subscription support for external components using `CustomAPIDevice::subscribe_homeassistant_state()`. Automatically enabled when using any `homeassistant` platform component. Defaults to `false`.
+</ParamField>
+
 <ParamField path="on_client_connected" type="Automation">
   Triggered when a client connects. Provides `client_address` (string) and `client_info` (string) variables.
 </ParamField>

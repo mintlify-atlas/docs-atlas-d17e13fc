@@ -1,5 +1,5 @@
 ---
-title: "ESP32 Platform Configuration in ESPHome"
+title: "ESP32 Platform: Board, Framework, and Variant Config"
 sidebarTitle: "ESP32"
 description: "Configure ESP32 platform in ESPHome: board selection, framework (Arduino vs ESP-IDF), flash mode, partition tables, and toolchain options."
 ---
@@ -106,6 +106,14 @@ esp32:
 
 <ParamField path="version" type="string">
   Framework version. `recommended` (default), `latest` (newest release), or `dev` (latest commit). Or specify an exact release tag (e.g. `5.3.1`).
+</ParamField>
+
+<ParamField path="source" type="string">
+  Custom PlatformIO package URL or git repository for a patched framework version. Supports the same URL schemes as PlatformIO's `pkg install` (e.g. `https://github.com/user/arduino-esp32.git#branch`, `symlink:///path/to/esp-idf`).
+</ParamField>
+
+<ParamField path="platform_version" type="string">
+  Version of the [pioarduino/espressif32](https://github.com/pioarduino/platform-espressif32/releases/) PlatformIO platform package. For known framework versions this is set automatically and does not need to be specified.
 </ParamField>
 
 <ParamField path="sdkconfig_options" type="mapping">

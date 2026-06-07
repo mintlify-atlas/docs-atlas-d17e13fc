@@ -1,5 +1,5 @@
 ---
-title: "ESPHome Web Server REST and SSE API Reference"
+title: "ESPHome Web Server REST and SSE API Reference Guide"
 sidebarTitle: "Web API"
 description: "ESPHome Web Server API: SSE real-time event stream at /events, REST endpoints for reading states and sending commands to each entity type."
 ---
@@ -49,8 +49,8 @@ Every `state` event carries a JSON object with at minimum the following identifi
 
 | Field | Description |
 |-------|-------------|
-| `id` | Legacy identifier in `domain-object_id` format (e.g., `sensor-temperature`). **In ESPHome 2026.8.0 this field switches to the new format and `name_id` is removed.** |
 | `name_id` | **Temporary field (removed in 2026.8.0).** New identifier format: `domain/entity_name` (e.g., `sensor/Temperature`) or `domain/device_name/entity_name` for sub-device entities. |
+| `id` | Legacy identifier in `domain-object_id` format (e.g., `sensor-temperature`). **In ESPHome 2026.8.0 this field switches to the new format and `name_id` is removed.** |
 | `state` | Text representation of the current state (e.g., `ON`, `21.4 °C`). |
 
 <Warning>
@@ -119,13 +119,13 @@ Every `state` event carries a JSON object with at minimum the following identifi
 
 The REST API follows the URL schema:
 
-```
+```text
 /<domain>/<entity_name>[/<action>?<param>=<value>]
 ```
 
 For entities on sub-devices:
 
-```
+```text
 /<domain>/<device_name>/<entity_name>[/<action>]
 ```
 

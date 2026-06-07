@@ -1,7 +1,7 @@
 ---
-title: "ESP8266 Platform Configuration in ESPHome"
+title: "ESP8266 Platform: Board and Flash Config in ESPHome"
 sidebarTitle: "ESP8266"
-description: "Configure ESP8266 in ESPHome: supported boards, restore_from_flash, early_pin_init, and platform-specific limitations vs ESP32."
+description: "Configure ESP8266 in ESPHome: supported boards, restore_from_flash, early_pin_init, board_flash_mode, and platform-specific limitations vs ESP32."
 ---
 
 The `esp8266:` component provides platform-specific configuration for the ESP8266 microcontroller family — Espressif's original Wi-Fi SoC that still powers a huge number of smart home devices. While the ESP8266 is significantly more limited than the ESP32 (single core, ~40 KB usable RAM, no Bluetooth, fewer GPIOs), ESPHome supports it fully with the Arduino framework. If you're starting a new project, consider the ESP32-C3 as a modern, pin-compatible replacement that uses the same RISC-V UART-based programming workflow.
@@ -134,7 +134,7 @@ The first line of the serial output at 74800 baud (before the normal 115200 baud
 
 ESPHome automatically captures crash data (exception cause, fault PC, stack return addresses) from the previous boot and logs it at `ERROR` level on startup. No configuration is required.
 
-```
+```text
 [E][esp8266]: *** CRASH DETECTED ON PREVIOUS BOOT ***
 [E][esp8266]:   Reason: Exception - StoreProhibit (exccause=29)
 [E][esp8266]:   PC: 0x40212EC5
