@@ -1,0 +1,283 @@
+---
+title: "Using the ESP-IDF Framework with ESPHome"
+sidebarTitle: "ESP-IDF"
+description: "Configure ESPHome to use the ESP-IDF framework instead of Arduino on ESP32. Covers version selection, toolchain, partitions, and sdkconfig options."
+---
+
+ESP-IDF (Espressif IoT Development Framework) is Espressif's official native development framework for the ESP32 family. Starting with ESPHome 2026.1.0, ESP-IDF is the **default framework** for all ESP32 variants. It produces smaller binaries, compiles firmware specifically tailored to your device's configuration, and unlocks the full range of ESP32 hardware features. The Arduino framework remains available and supported for configurations that depend on Arduino-only libraries.
+
+---
+
+## Arduino vs. ESP-IDF
+
+| | ESP-IDF | Arduino |
+|--|---------|---------|
+| Binary size | Up to 40% smaller | Larger (includes Arduino compatibility layer) |
+| Supported variants | All ESP32 variants | ESP32, ESP32-C3, ESP32-S2, ESP32-S3 only |
+| Actively developed | ✅ Primary target | ✅ Maintained |
+| Custom sdkconfig | ✅ Full control | Limited |
+| Crash backtraces | ✅ Yes | No |
+| Build system | CMake + Ninja | PlatformIO |
+| Available since | ESP32 initial release | ESP32 initial release |
+
+<Note>
+  The Arduino framework is implemented as an ESP-IDF component — it sits on top of ESP-IDF and provides Arduino API compatibility. This means Arduino builds include both layers, resulting in longer build times and higher flash and RAM usage compared to native ESP-IDF builds.
+</Note>
+
+---
+
+## Choosing a Framework
+
+### Option 1 — ESP-IDF (Recommended)
+
+```yaml
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+```
+
+### Option 2 — Arduino (when required)
+
+```yaml
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+```
+
+If you have an existing configuration that does not specify a framework, it will default to ESP-IDF as of ESPHome 2026.1.0. See the Arduino to ESP-IDF migration guide for help transitioning.
+
+---
+
+## Framework Configuration Variables
+
+<ParamField path="framework.type" type="string">
+  `esp-idf` or `arduino`. Defaults to `esp-idf` for all ESP32 variants.
+</ParamField>
+
+<ParamField path="framework.version" type="string">
+  The ESP-IDF (or Arduino) version to use. Defaults to `recommended`. Other accepted values:
+
+  - `recommended` — the version tested and recommended by the ESPHome team *(default)*
+  - `latest` — the newest stable release, even if not yet recommended
+  - `dev` — the latest development commit; may break at any time
+  - A specific version string, e.g. `5.3.2`
+</ParamField>
+
+<ParamField path="framework.source" type="string">
+  A custom PlatformIO package URL for the framework. Useful for testing patched or pre-release builds:
+
+  ```yaml
+  framework:
+    type: esp-idf
+    source: "https://github.com/espressif/esp-idf.git#v5.3.2"
+  ```
+</ParamField>
+
+<ParamField path="framework.sdkconfig_options" type="mapping">
+  Raw key-value pairs passed to ESP-IDF's `sdkconfig` build system. Use these to tune Kconfig options that ESPHome does not expose directly.
+</ParamField>
+
+<ParamField path="framework.log_level" type="string">
+  ESP-IDF framework log verbosity. One of `NONE`, `ERROR` *(default)*, `WARN`, `INFO`, `DEBUG`, `VERBOSE`.
+</ParamField>
+
+<ParamField path="framework.components" type="list">
+  Additional ESP-IDF components to include from component registries or git sources. See [IDF Components](/components/esp32#esp32-idf_components).
+</ParamField>
+
+---
+
+## Full Configuration Example
+
+```yaml
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      # Increase main task stack size
+      CONFIG_ESP_MAIN_TASK_STACK_SIZE: "8192"
+      # Enable PSRAM support
+      CONFIG_SPIRAM: "y"
+      CONFIG_SPIRAM_MODE_OCT: "y"
+      # Adjust Bluetooth controller memory
+      CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY: "y"
+```
+
+---
+
+## Selecting the Toolchain
+
+ESPHome supports two build backends for ESP-IDF firmware:
+
+| Toolchain | Description |
+|-----------|-------------|
+| `platformio` | Default. Wraps ESP-IDF inside PlatformIO's build system. |
+| `esp-idf` | Uses ESPHome's own ESP-IDF management with automatic download and environment setup. |
+
+Set the toolchain in YAML:
+
+```yaml
+esp32:
+  variant: esp32s3
+  toolchain: esp-idf
+  framework:
+    type: esp-idf
+```
+
+Or override it on the CLI (CLI takes precedence over YAML):
+
+```bash
+esphome --toolchain esp-idf compile my_device.yaml
+```
+
+---
+
+## Automatic ESP-IDF Management (Native Toolchain)
+
+When you use `toolchain: esp-idf`, ESPHome manages the entire framework lifecycle automatically:
+
+<Steps>
+  ### Download the Framework
+
+  ESPHome downloads the ESP-IDF release archive for the configured `version` into `<data_dir>/idf/frameworks/<version>/`. The download URL defaults to GitHub releases and can be overridden via `ESPHOME_IDF_FRAMEWORK_MIRRORS`.
+
+  ### Install Build Tools
+
+  ESP-IDF's `idf_tools.py` is run to install `cmake`, `ninja`, and other required tools if they are not already present on the system.
+
+  ### Create a Python Virtual Environment
+
+  A dedicated Python virtual environment is created at `<data_dir>/idf/penvs/<version>/` and populated with the ESP-IDF Python dependencies. A stamp file tracks the environment version to avoid unnecessary reinstalls.
+
+  ### Build
+
+  All `idf.py`, `cmake`, `ninja`, and `esptool` invocations use this managed environment. You do not need to run `source export.sh` or set `IDF_PATH` manually.
+</Steps>
+
+<Tip>
+  If you already have ESP-IDF installed system-wide, set the `IDF_PATH` environment variable and ESPHome will use your existing installation instead of downloading its own copy.
+</Tip>
+
+---
+
+## Storage Locations
+
+| Path | Contents |
+|------|----------|
+| `<data_dir>/idf/frameworks/<version>/` | ESP-IDF framework archive |
+| `<data_dir>/idf/penvs/<version>/` | Python virtual environment |
+| `<data_dir>/idf/tools/` | Build tools (cmake, ninja, esptool) |
+
+Override the base directory:
+
+```bash
+export ESPHOME_ESP_IDF_PREFIX="/opt/esphome-esp-idf"
+```
+
+---
+
+## Custom `sdkconfig` Options
+
+The `sdkconfig_options:` mapping passes raw Kconfig values directly to the ESP-IDF build system. This enables fine-grained tuning of any option exposed by ESP-IDF's configuration system:
+
+```yaml
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      # Disable the deprecated legacy_includes to shrink binary
+      CONFIG_LWIP_DHCP_RESTORE_LAST_IP: "y"
+      # Increase log buffer
+      CONFIG_LOG_DEFAULT_LEVEL_INFO: "y"
+      # Set WiFi task stack size
+      CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM: "10"
+```
+
+See the [ESP-IDF Kconfig reference](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/kconfig.html) for available options.
+
+---
+
+## Components Requiring ESP-IDF
+
+The following ESP32 variants **require** ESP-IDF and have no Arduino support:
+
+- ESP32-C2
+- ESP32-C5
+- ESP32-C6 / C61
+- ESP32-H2
+- ESP32-P4
+
+The following ESPHome components also require ESP-IDF (they will not compile with `framework: type: arduino`):
+
+- `esp32_rmt_led_strip` — LED strip via RMT peripheral
+- `micro_wake_word` — on-device wake word detection
+- `esp_adf` — ESP Audio Development Framework integration
+- Camera components on newer variants
+
+---
+
+## Components Incompatible with ESP-IDF
+
+Some components currently require the Arduino framework and do not have native ESP-IDF equivalents:
+
+| Arduino Component | Status |
+|-------------------|--------|
+| `fastled_clockless` / `fastled_spi` | Replace with `esp32_rmt_led_strip` or `spi_led_strip` |
+| `neopixelbus` | Replace with `esp32_rmt_led_strip` |
+| `bme680_bsec` | Replace with `bme68x_bsec2` |
+| `heatpumpir` | No ESP-IDF alternative yet |
+| `midea` climate | No ESP-IDF alternative yet |
+| WLED Effect | No ESP-IDF alternative yet |
+
+<Note>
+  Component compatibility improves with every ESPHome release. When you compile with ESP-IDF, ESPHome will automatically notify you if any components are incompatible and suggest alternatives where they exist.
+</Note>
+
+---
+
+## Crash Reporting
+
+ESP-IDF includes built-in panic handling that produces detailed crash backtraces. These appear in the serial log output and include:
+
+- Register dump
+- Stack backtrace with symbol names (when compiled with debug info)
+- Cause of the crash (e.g., stack overflow, divide by zero, null pointer dereference)
+
+Arduino-framework builds do not produce the same quality of crash reports, making ESP-IDF the preferred choice for any device you need to debug remotely.
+
+---
+
+## Advanced Configuration
+
+```yaml
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+    advanced:
+      # Reduce binary size by silencing assertion failures instead of crashing
+      assertion_level: SILENT
+      # Optimize for performance instead of size
+      compiler_optimization: PERF
+      # Execute code from PSRAM (ESP32-S3/P4 only)
+      execute_from_psram: true
+```
+
+<ParamField path="advanced.assertion_level" type="string">
+  One of `ENABLE` *(default)*, `SILENT`, or `DISABLE`. Disabling or silencing assertions reduces binary size but makes bugs harder to diagnose.
+</ParamField>
+
+<ParamField path="advanced.compiler_optimization" type="string">
+  One of `SIZE` *(default)*, `PERF`, `NONE`, or `DEBUG`. `PERF` increases binary size but may improve runtime performance.
+</ParamField>
+
+<ParamField path="advanced.execute_from_psram" type="boolean">
+  ESP32-S3 and ESP32-P4 only. When `true`, code executes from PSRAM, which can speed up display drawing and allows normal operation while FLASH is being written (e.g., during OTA). Defaults to `false`.
+</ParamField>

@@ -1,0 +1,82 @@
+---
+title: "ESPHome Cookbook: Worked Configuration Examples"
+sidebarTitle: "Overview"
+description: "Practical ESPHome configuration examples for real-world projects: displays, sensors, power meters, garage doors, and more complete YAML configs."
+---
+
+The ESPHome Cookbook is a collection of complete, tested YAML configurations for real devices and real-world scenarios. Unlike reference documentation, each recipe walks you through an end-to-end project — hardware wiring, component choices, and the full ESPHome config file you can adapt and flash today. Whether you are building your first smart-home gadget or looking for a proven pattern to extend, the cookbook gives you a working starting point rather than a blank page.
+
+Every recipe is self-contained: it lists the hardware you need, explains every section of the YAML, and highlights the gotchas worth knowing before you solder anything. Copy a recipe, change the GPIO pins and sensor IDs to match your board, and you are ready to go.
+
+## Available recipes
+
+<CardGroup cols={2}>
+  <Card
+    title="OLED Display — Time & Temperature"
+    icon="display"
+    href="/cookbook/display-time-temp"
+  >
+    Drive a 128×64 SSD1306 OLED over I²C to show live time (from SNTP or Home
+    Assistant) and one or more temperature readings — all in under 50 lines of
+    YAML.
+  </Card>
+  <Card
+    title="Garage Door Controller"
+    icon="garage"
+    href="/cookbook/garage-door"
+  >
+    Wire a relay module and a magnetic reed switch to an ESP board and expose a
+    fully functional Cover entity to Home Assistant with open, close, and stop
+    actions.
+  </Card>
+  <Card
+    title="Whole-Home Power Meter"
+    icon="bolt"
+    href="/cookbook/power-meter"
+  >
+    Clip a photoresistor onto your meter's pulse LED (or wire to an S0 port) and
+    track real-time watts plus cumulative kWh — no electrician required.
+  </Card>
+  <Card
+    title="BME280 Environment Sensor"
+    icon="thermometer"
+    href="https://esphome.io/cookbook/bme280_environment"
+  >
+    Add altitude, absolute humidity, dew point, and equivalent sea-level pressure
+    calculations on top of a standard BME280 temperature/pressure/humidity sensor.
+  </Card>
+</CardGroup>
+
+## How to use a recipe
+
+<Steps>
+  <Step title="Read the hardware section first">
+    Each recipe lists the exact components and wiring before the YAML. Confirm
+    you have everything on hand and that your GPIO pins are free before you
+    start editing.
+  </Step>
+  <Step title="Copy the full YAML block">
+    Every recipe contains a complete, compilable configuration. Copy it into a
+    new file in your `/config/esphome/` directory (e.g. `my-display.yaml`).
+  </Step>
+  <Step title="Substitute your board and pin values">
+    Replace every `GPIOXX` placeholder with the real pin numbers for your
+    board. Update Wi-Fi credentials, entity IDs, sensor addresses, and any
+    other environment-specific values.
+  </Step>
+  <Step title="Validate and flash">
+    Run **Validate** in the ESPHome dashboard (or `esphome config my-display.yaml`
+    on the CLI) to catch typos, then flash over USB or OTA.
+  </Step>
+  <Step title="Iterate">
+    Recipes are starting points, not final answers. Swap a DHT22 for a BME280,
+    add a second display page, or hook an automation into a Home Assistant
+    blueprint — the YAML is yours to extend.
+  </Step>
+</Steps>
+
+<Tip>
+  Store your font files and any other assets in the same `/config/esphome/`
+  directory as your YAML. ESPHome resolves relative file paths from there
+  during compilation.
+</Tip>

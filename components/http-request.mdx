@@ -1,0 +1,328 @@
+---
+title: "HTTP Request Component: Call External APIs from ESPHome"
+sidebarTitle: "HTTP Request"
+description: "Make HTTP GET and POST requests from ESPHome to external APIs and webhooks. Covers request config, JSON parsing, and response handling."
+---
+
+The `http_request` component lets your ESPHome device reach out to external HTTP and HTTPS servers — REST APIs, webhooks, local home automation endpoints, or any URL your device can route to. Trigger requests from any automation (button presses, sensor thresholds, time schedules), capture and parse JSON responses, and feed the results back into your device's sensors or switches, all from YAML.
+
+<Note>
+  `http_request` performs network I/O and will **block** the ESPHome main loop for the duration of each request. Keep timeouts short and avoid making requests in time-critical automation paths. For ESP32, SSL certificate verification is on by default and uses the Mozilla NSS root certificate bundle embedded in the firmware.
+</Note>
+
+## Minimal Configuration
+
+```yaml
+http_request:
+```
+
+The component works on ESP32, ESP8266, and RP2040. SSL support, buffer sizes, and a few advanced options differ by platform (see [Platform-specific Options](#platform-specific-options)).
+
+## Configuration Variables
+
+<ParamField path="timeout" type="Time">
+  Maximum time to wait for the server to respond before aborting the request. Defaults to `4.5s`.
+</ParamField>
+
+<ParamField path="follow_redirects" type="boolean">
+  Automatically follow HTTP 3xx redirects. Defaults to `true`.
+</ParamField>
+
+<ParamField path="redirect_limit" type="integer">
+  Maximum number of consecutive redirects to follow when `follow_redirects` is `true`. Defaults to `3`.
+</ParamField>
+
+<ParamField path="useragent" type="string">
+  Value of the `User-Agent` header sent with every request. Defaults to `ESPHome/<version> (https://esphome.io)` — for example, `ESPHome/2024.6.0 (https://esphome.io)`.
+</ParamField>
+
+<ParamField path="verify_ssl" type="boolean">
+  Validate the server's SSL/TLS certificate against the embedded Mozilla NSS root certificate bundle. Defaults to `true`. **Only supported on ESP32.** Must be explicitly set to `false` on other platforms when using HTTPS.
+
+  <Warning>
+    Setting `verify_ssl: false` removes protection against person-in-the-middle attacks. Only disable it if you are using Arduino on a non-ESP32 device, or the device has insufficient memory. To connect to servers using self-signed certificates on ESP32, use `ca_certificate_path` instead.
+  </Warning>
+</ParamField>
+
+<ParamField path="watchdog_timeout" type="Time">
+  Override the hardware watchdog timeout during HTTP transfers. Only change this if your device is rebooting due to watchdog resets on very slow connections. **Available on ESP32 and RP2040 only.**
+</ParamField>
+
+<ParamField path="id" type="ID">
+  Manually specify the component ID for use in code generation and lambdas.
+</ParamField>
+
+## Platform-specific Options
+
+### ESP32
+
+<ParamField path="buffer_size_rx" type="integer">
+  HTTP receive buffer size in bytes. Defaults to `512`.
+</ParamField>
+
+<ParamField path="buffer_size_tx" type="integer">
+  HTTP transmit buffer size in bytes. Defaults to `512`.
+</ParamField>
+
+<ParamField path="ca_certificate_path" type="string">
+  Path to a PEM-encoded CA certificate file to verify connections to servers using custom or self-signed CA certificates. The certificate is embedded at compile time. When set, the default Mozilla certificate bundle is **not** included, reducing firmware size.
+</ParamField>
+
+### ESP8266
+
+<ParamField path="tls_buffer_size_rx" type="integer">
+  TLS receive buffer size. Modern HTTPS servers use 16384-byte TLS records; set this to `16384` to handle them correctly. This significantly increases RAM usage. Defaults to `512`.
+</ParamField>
+
+<ParamField path="tls_buffer_size_tx" type="integer">
+  TLS transmit buffer size. Defaults to `512`.
+</ParamField>
+
+<ParamField path="esp8266_disable_ssl_support" type="boolean">
+  Exclude SSL libraries from the build to reduce binary size. When `true`, HTTPS is unavailable and `verify_ssl: false` is implied. Useful for 512 KB or 1 MB flash devices. Defaults to `false`.
+</ParamField>
+
+## Actions
+
+### `http_request.get` Action
+
+Sends an HTTP GET request to a URL. Use this to read data from APIs or trigger webhooks.
+
+```yaml
+on_...:
+  - http_request.get:
+      url: https://api.example.com/status
+      request_headers:
+        Authorization: "Bearer my-token"
+      capture_response: true
+      on_response:
+        then:
+          - logger.log:
+              format: "Status: %d, took %u ms"
+              args:
+                - response->status_code
+                - response->duration_ms
+      on_error:
+        then:
+          - logger.log: "Request failed!"
+
+  # Short form — URL only
+  - http_request.get: https://api.example.com/ping
+```
+
+#### Action Variables
+
+<ParamField path="url" type="string" required>
+  The URL to send the request to. Supports [templates](/reference/lambda-templates).
+</ParamField>
+
+<ParamField path="request_headers" type="mapping">
+  Key-value map of HTTP headers to include. Values support [templates](/reference/lambda-templates).
+</ParamField>
+
+<ParamField path="collect_headers" type="list of strings">
+  Names of response headers to collect for use in `on_response` via `response->get_response_header("Header-Name")`.
+</ParamField>
+
+<ParamField path="capture_response" type="boolean">
+  When `true`, the full response body is captured into a `std::string` named `body`, available in `on_response` lambdas. Defaults to `false`.
+</ParamField>
+
+<ParamField path="max_response_buffer_size" type="integer">
+  Maximum size of the response buffer when `capture_response` is `true`. Defaults to `1 kB`.
+</ParamField>
+
+<ParamField path="on_response" type="Automation">
+  Automation triggered when the request completes (regardless of status code). Available variables: `response` (pointer to `HttpContainer` with `status_code`, `duration_ms`, `content_length`), `body` (string, if `capture_response: true`).
+</ParamField>
+
+<ParamField path="on_error" type="Automation">
+  Automation triggered if the request could not be completed at all (network error, timeout, DNS failure). Not triggered for non-200 HTTP responses.
+</ParamField>
+
+---
+
+### `http_request.post` Action
+
+Sends an HTTP POST request. Supports raw body strings and structured JSON payloads.
+
+```yaml
+on_...:
+  - http_request.post:
+      url: https://api.example.com/update
+      request_headers:
+        Content-Type: application/json
+      json:
+        key: !lambda "return id(my_sensor).state;"
+        greeting: "Hello World"
+
+  # Short form
+  - http_request.post: https://hooks.example.com/trigger
+```
+
+#### Additional Variables (beyond `http_request.get`)
+
+<ParamField path="body" type="string">
+  Raw HTTP body string. Supports [templates](/reference/lambda-templates).
+</ParamField>
+
+<ParamField path="json" type="mapping or lambda">
+  Body encoded as JSON. Two syntax options:
+
+  - **Mapping** (syntax 1): Key-value pairs where all values must be strings. Supports templates per value.
+  - **Lambda block** (syntax 2): A C++ lambda with access to a `root` ArduinoJson `JsonObject`. Use `root["key"] = value;` to set fields. Allows booleans and numeric types.
+</ParamField>
+
+---
+
+### `http_request.send` Action
+
+General-purpose action supporting any HTTP method.
+
+```yaml
+on_...:
+  - http_request.send:
+      method: PUT
+      url: https://api.example.com/resource/1
+      request_headers:
+        Content-Type: application/json
+      body: '{"state": "on"}'
+```
+
+<ParamField path="method" type="string" required>
+  HTTP method to use. One of: `GET`, `POST`, `PUT`, `DELETE`, `PATCH`.
+</ParamField>
+
+All other options from `http_request.get` and `http_request.post` apply.
+
+## Response Handling
+
+The `on_response` trigger receives these variables:
+
+| Variable | Type | Description |
+|---|---|---|
+| `response` | `HttpContainer*` | Pointer to response metadata |
+| `response->status_code` | `int` | HTTP status code (e.g. `200`, `404`) |
+| `response->duration_ms` | `uint32_t` | Round-trip time in milliseconds |
+| `response->content_length` | `int` | Content-Length header value (may be `-1`) |
+| `body` | `std::string` | Response body (only when `capture_response: true`) |
+
+Use `response->get_response_header("Header-Name")` to read a specific response header (must be listed in `collect_headers`).
+
+<Note>
+  Always check `response->status_code` before using `body`. Server errors (404, 500, etc.) return a non-200 code and may include an error message in the body.
+</Note>
+
+## Examples
+
+### Call a Webhook on Button Press
+
+```yaml
+http_request:
+  timeout: 10s
+
+binary_sensor:
+  - platform: gpio
+    pin: GPIO0
+    name: "Doorbell Button"
+    on_press:
+      - http_request.post:
+          url: https://hooks.example.com/doorbell
+          request_headers:
+            Content-Type: application/json
+          json: |-
+            root["event"] = "pressed";
+            root["device"] = "front-door";
+```
+
+### Parse a JSON API Response
+
+This example fetches a media player status and publishes the volume to a template sensor. Assume the server returns `{"status":"play","vol":"42","mute":"0"}`:
+
+```yaml
+http_request:
+
+sensor:
+  - platform: template
+    name: "Player Volume"
+    id: player_volume
+
+interval:
+  - interval: 30s
+    then:
+      - http_request.get:
+          url: http://192.168.1.100/api/status
+          capture_response: true
+          on_response:
+            then:
+              - if:
+                  condition:
+                    lambda: return response->status_code == 200;
+                  then:
+                    - lambda: |-
+                        json::parse_json(body, [](JsonObject root) -> bool {
+                          if (root["vol"]) {
+                            id(player_volume).publish_state(root["vol"]);
+                            return true;
+                          }
+                          ESP_LOGI("http", "No 'vol' key in response");
+                          return false;
+                        });
+                  else:
+                    - logger.log:
+                        format: "API error %d: %s"
+                        args: [ 'response->status_code', 'body.c_str()' ]
+```
+
+### Templatable URL and Headers
+
+```yaml
+on_...:
+  - http_request.post:
+      url: !lambda |-
+        return ((std::string)"https://api.example.com/report?sensor=" + id(my_sensor).state).c_str();
+      request_headers:
+        X-Device-ID: !lambda |-
+          return App.get_name().c_str();
+      body: !lambda |-
+        return id(my_sensor).state;
+```
+
+### POST with Numeric JSON (ArduinoJson syntax)
+
+```yaml
+on_...:
+  - http_request.post:
+      url: https://api.example.com/data
+      json: |-
+        root["temperature"] = id(temp_sensor).state;
+        root["humidity"] = id(hum_sensor).state;
+        root["online"] = true;
+
+      # Sends: {"temperature": 22.5, "humidity": 58.0, "online": true}
+```
+
+### Collect and Log Response Headers
+
+```yaml
+on_...:
+  - http_request.get:
+      url: https://api.example.com/data
+      collect_headers:
+        - Content-Type
+        - X-Rate-Limit-Remaining
+      on_response:
+        then:
+          - logger.log:
+              format: "Status %d | Content-Type: %s | Rate limit left: %s"
+              args:
+                - response->status_code
+                - response->get_response_header("Content-Type").c_str()
+                - response->get_response_header("X-Rate-Limit-Remaining").c_str()
+```
+
+## See Also
+
+- JSON Component
+- [ArduinoJson Library](https://github.com/bblanchon/ArduinoJson)
+- [Automations & Actions](/guides/automations)

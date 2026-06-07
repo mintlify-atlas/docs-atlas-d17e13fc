@@ -1,0 +1,359 @@
+---
+title: "Voice Assistant Component for ESPHome Devices"
+sidebarTitle: "Voice Assistant"
+description: "Add wake-word detection and voice assistant capabilities to ESP32 devices with ESPHome's voice_assistant and micro_wake_word components."
+---
+
+ESPHome's `voice_assistant` component turns any ESP32 device with a microphone into a local voice assistant. It streams microphone audio to Home Assistant's [Assist pipeline](https://www.home-assistant.io/voice_control/), which handles wake-word detection, speech-to-text, intent processing, and text-to-speech — all locally without cloud services. Responses can be played back through a connected speaker or media player.
+
+<Note>
+  Voice Assistant requires Home Assistant 2023.5 or later.
+</Note>
+
+<Warning>
+  Audio and voice components consume significant RAM and CPU. Crashes may occur if you include too many additional components, especially Bluetooth/BLE. If you experience crashes, consult the [Troubleshooting guide](https://esphome.io/guides/troubleshooting/) for backtrace instructions.
+</Warning>
+
+## Minimal Example
+
+```yaml
+i2s_audio:
+  i2s_lrclk_pin: GPIO25
+  i2s_bclk_pin: GPIO26
+
+microphone:
+  - platform: i2s_audio
+    id: board_mic
+    i2s_din_pin: GPIO23
+    adc_type: external
+
+speaker:
+  - platform: i2s_audio
+    id: board_speaker
+    i2s_dout_pin: GPIO22
+
+voice_assistant:
+  microphone: board_mic
+  speaker: board_speaker
+```
+
+## Configuration Variables
+
+<ParamField path="microphone" type="Microphone ID or list" optional>
+  The microphone source(s) for audio input. A single source can be provided directly, or a list of up to two sources for dual-channel streaming (see [Dual Microphone](#dual-microphone-channel) below).
+</ParamField>
+
+<ParamField path="speaker" type="ID" optional>
+  The speaker component to use for TTS response playback. Cannot be used together with `media_player`.
+</ParamField>
+
+<ParamField path="media_player" type="ID" optional>
+  The media player component to use for TTS response playback. Cannot be used together with `speaker`.
+</ParamField>
+
+<ParamField path="micro_wake_word" type="ID" optional>
+  The `micro_wake_word` component for on-device wake-word detection. When configured, Home Assistant can remotely change which wake-word model is active.
+</ParamField>
+
+<ParamField path="use_wake_word" type="boolean" optional>
+  Enable wake-word detection in the Home Assistant Assist pipeline. Defaults to `false`.
+</ParamField>
+
+<ParamField path="conversation_timeout" type="Time" optional>
+  How long to preserve conversation context before resetting the `conversation_id`. Defaults to `300s`.
+</ParamField>
+
+<ParamField path="noise_suppression_level" type="int 0–4" optional>
+  Noise suppression level applied in the Assist pipeline. `0` = disabled (default).
+</ParamField>
+
+<ParamField path="auto_gain" type="dBFS 0–31" optional>
+  Automatic gain control level. `0dBFS` = disabled (default).
+</ParamField>
+
+<ParamField path="volume_multiplier" type="float" optional>
+  Volume scaling multiplier applied to the microphone. Must be > 0. Defaults to `1` (disabled).
+</ParamField>
+
+---
+
+## Automation Triggers
+
+### Pipeline State Triggers
+
+```yaml
+voice_assistant:
+  microphone: board_mic
+  speaker: board_speaker
+  on_listening:
+    - light.turn_on:
+        id: status_led
+        effect: "pulse"
+  on_stt_vad_start:
+    - logger.log: "Voice activity detected"
+  on_stt_end:
+    - logger.log:
+        format: "You said: %s"
+        args: [x.c_str()]
+  on_tts_start:
+    - logger.log:
+        format: "Response: %s"
+        args: [x.c_str()]
+  on_tts_end:
+    - logger.log:
+        format: "Audio URL: %s"
+        args: [x.c_str()]
+  on_end:
+    - light.turn_off: status_led
+  on_error:
+    - logger.log:
+        format: "Error: %s - %s"
+        args: [code.c_str(), message.c_str()]
+```
+
+### Wake Word Triggers
+
+```yaml
+voice_assistant:
+  on_wake_word_detected:
+    - logger.log: "Wake word heard!"
+    - light.turn_on: status_led
+```
+
+### Client Connection Triggers
+
+```yaml
+voice_assistant:
+  on_client_connected:
+    - logger.log: "Home Assistant connected"
+  on_client_disconnected:
+    - logger.log: "Home Assistant disconnected"
+```
+
+### Intent Triggers
+
+```yaml
+voice_assistant:
+  on_intent_start:
+    - logger.log: "Processing intent..."
+  on_intent_progress:
+    - lambda: |-
+        if (!x.empty()) {
+          ESP_LOGI("va", "Streaming TTS URL: %s", x.c_str());
+        }
+  on_intent_end:
+    - logger.log: "Intent complete"
+```
+
+### TTS Stream Triggers (requires `speaker`)
+
+```yaml
+voice_assistant:
+  speaker: board_speaker
+  on_tts_stream_start:
+    - logger.log: "TTS audio starting"
+  on_tts_stream_end:
+    - light.turn_off: status_led
+```
+
+### Timer Triggers
+
+```yaml
+voice_assistant:
+  on_timer_started:
+    - logger.log:
+        format: "Timer started: %d seconds"
+        args: [timer.total_seconds]
+  on_timer_finished:
+    - rtttl.play: "alert:d=4,o=5,b=100:e,e,e"
+  on_timer_cancelled:
+    - logger.log: "Timer cancelled"
+  on_timer_tick:
+    - lambda: |-
+        for (auto &t : timers) {
+          ESP_LOGI("timer", "Remaining: %d s", t.seconds_left);
+        }
+```
+
+---
+
+## Voice Assistant Actions
+
+### `voice_assistant.start`
+
+Listen for a single voice command, then stop. Silence detection automatically determines when the user has finished speaking.
+
+```yaml
+on_...:
+  - voice_assistant.start:
+      silence_detection: true    # default: true
+      wake_word: "hey jarvis"    # optional: wake word that triggered start
+```
+
+### `voice_assistant.start_continuous`
+
+Continuously listen for commands. Automatically restarts after each response. Call `voice_assistant.stop` to end the cycle.
+
+```yaml
+on_...:
+  - voice_assistant.start_continuous:
+```
+
+### `voice_assistant.stop`
+
+Stop the current listening session or continuous cycle.
+
+```yaml
+on_...:
+  - voice_assistant.stop:
+```
+
+---
+
+## Conditions
+
+### `voice_assistant.is_running`
+
+Returns `true` if the voice assistant is currently active.
+
+### `voice_assistant.connected`
+
+Returns `true` if Home Assistant is connected and ready.
+
+---
+
+## Usage Patterns
+
+### Push to Talk
+
+Hold a button to listen, release to send.
+
+```yaml
+voice_assistant:
+  microphone:
+    microphone: board_mic
+    channels: 0
+    gain_factor: 4
+  speaker: board_speaker
+
+binary_sensor:
+  - platform: gpio
+    pin: GPIO0
+    name: "PTT Button"
+    on_press:
+      - voice_assistant.start:
+          silence_detection: false   # manual release controls end
+    on_release:
+      - voice_assistant.stop:
+```
+
+### Click to Toggle
+
+Click once to start listening; click again to stop.
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    pin: GPIO0
+    name: "VA Button"
+    on_click:
+      - if:
+          condition: voice_assistant.is_running
+          then:
+            - voice_assistant.stop:
+          else:
+            - voice_assistant.start_continuous:
+```
+
+### Always-On with Wake Word (Micro Wake Word)
+
+```yaml
+micro_wake_word:
+  models:
+    - model: hey_jarvis
+  on_wake_word_detected:
+    - voice_assistant.start:
+        wake_word: !lambda return wake_word;
+
+voice_assistant:
+  microphone: board_mic
+  speaker: board_speaker
+  micro_wake_word: mww_component
+  on_end:
+    - micro_wake_word.start:    # re-arm wake word after each interaction
+
+esphome:
+  on_boot:
+    - micro_wake_word.start:    # start listening immediately on boot
+```
+
+---
+
+## Dual Microphone Channel
+
+Provide two microphone sources for improved voice pipeline performance. Home Assistant 2026.6+ is required to use the second channel.
+
+```yaml
+voice_assistant:
+  id: va
+  microphone:
+    - microphone: i2s_mics
+      channels: 0    # processed audio (with gain, noise suppression)
+    - microphone: i2s_mics
+      channels: 1    # raw audio
+  speaker: board_speaker
+```
+
+<Note>
+  Both microphone sources must provide 16 kHz, 16-bit, mono audio as required by the Assist pipeline.
+</Note>
+
+---
+
+## LED Feedback Example
+
+Provide clear visual feedback throughout the voice pipeline.
+
+```yaml
+light:
+  - platform: neopixelbus
+    id: ring_light
+    type: GRB
+    pin: GPIO4
+    num_leds: 12
+    effects:
+      - pulse:
+          name: "listening_pulse"
+          transition_length: 500ms
+          update_interval: 500ms
+
+voice_assistant:
+  microphone: board_mic
+  speaker: board_speaker
+  on_listening:
+    - light.turn_on:
+        id: ring_light
+        blue: 100%
+        brightness: 80%
+        effect: "listening_pulse"
+  on_stt_vad_end:
+    - light.turn_on:
+        id: ring_light
+        yellow: 100%
+        brightness: 60%
+        effect: none
+  on_tts_stream_start:
+    - light.turn_on:
+        id: ring_light
+        green: 100%
+        brightness: 60%
+  on_end:
+    - light.turn_off: ring_light
+  on_error:
+    - light.turn_on:
+        id: ring_light
+        red: 100%
+        brightness: 80%
+    - delay: 2s
+    - light.turn_off: ring_light
+```

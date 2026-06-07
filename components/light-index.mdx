@@ -1,0 +1,317 @@
+---
+title: "Light Components: Control LEDs and Light Strips"
+sidebarTitle: "Lights"
+description: "Control single LEDs, RGB strips, addressable LED strips, and RGBWW lights with ESPHome. Covers effects, transitions, and WLED compatibility."
+---
+
+ESPHome's `light` domain transforms GPIO outputs, PWM channels, and addressable LED drivers into full-featured Home Assistant light entities. A single configuration block covers everything from a simple on/off LED to a 300-pixel RGBWW NeoPixel strip with animated effects, color temperature control, gamma correction, and persistent state across reboots.
+
+## Base Light Configuration
+
+All light platforms share these configuration variables.
+
+```yaml
+light:
+  - platform: neopixelbus
+    type: GRB
+    variant: WS2812
+    pin: GPIO16
+    num_leds: 60
+    name: "Living Room Strip"
+    restore_mode: RESTORE_DEFAULT_OFF
+    default_transition_length: 1s
+    gamma_correct: 2.8
+    effects:
+      - pulse:
+      - rainbow:
+      - addressable_twinkle:
+```
+
+<ParamField path="id" type="string" optional>
+  Manually specify the ID for code generation. At least one of `id` and `name` must be specified.
+</ParamField>
+
+<ParamField path="name" type="string" optional>
+  The name of the light in Home Assistant. Set to `None` to inherit the device's `friendly_name`.
+</ParamField>
+
+<ParamField path="icon" type="icon" optional>
+  Manually override the MDI icon shown in the frontend.
+</ParamField>
+
+<ParamField path="restore_mode" type="enum" optional>
+  How the light restores state on boot:
+  - `ALWAYS_OFF` (default) — always start off.
+  - `ALWAYS_ON` — always start on.
+  - `RESTORE_DEFAULT_OFF` — restore last state, default to off.
+  - `RESTORE_DEFAULT_ON` — restore last state, default to on.
+  - `RESTORE_AND_OFF` / `RESTORE_AND_ON` — restore colors but force on/off state.
+  - `RESTORE_INVERTED_DEFAULT_OFF` / `RESTORE_INVERTED_DEFAULT_ON` — invert restored state.
+</ParamField>
+
+<ParamField path="gamma_correct" type="float" optional>
+  Gamma correction factor applied to all channels. Defaults to `2.8`. Set to `1.0` to disable.
+</ParamField>
+
+<ParamField path="default_transition_length" type="Time" optional>
+  Default transition time when no explicit length is specified. Defaults to `1s`.
+</ParamField>
+
+<ParamField path="flash_transition_length" type="Time" optional>
+  Transition length used during flash calls. Defaults to `0s`.
+</ParamField>
+
+<ParamField path="effects" type="list" optional>
+  A list of light effects to make available. Each entry in this list appears as an effect option in Home Assistant.
+</ParamField>
+
+<ParamField path="color_correct" type="list of float" optional>
+  Per-channel maximum brightness correction for addressable lights, e.g. `[100%, 50%, 100%]`.
+</ParamField>
+
+<ParamField path="power_supply" type="ID" optional>
+  ID of a `power_supply` component to automatically switch on when the light turns on.
+</ParamField>
+
+<ParamField path="disabled_by_default" type="boolean" optional>
+  If `true`, the entity is hidden in Home Assistant until manually enabled. Defaults to `false`.
+</ParamField>
+
+---
+
+## Light Automations
+
+### `light.turn_on` Action
+
+```yaml
+on_...:
+  - light.turn_on:
+      id: my_light
+      brightness: 80%
+      red: 100%
+      green: 0%
+      blue: 0%
+      transition_length: 500ms
+  # Shorthand:
+  - light.turn_on: my_light
+```
+
+### `light.turn_off` Action
+
+```yaml
+on_...:
+  - light.turn_off:
+      id: my_light
+      transition_length: 1s
+```
+
+### `light.toggle` Action
+
+```yaml
+on_...:
+  - light.toggle: my_light
+```
+
+### `light.dim_relative` Action
+
+Increase or decrease brightness by a relative percentage — great for button hold-to-dim.
+
+```yaml
+on_...:
+  - light.dim_relative:
+      id: my_light
+      relative_brightness: 5%
+      transition_length: 0.1s
+      brightness_limits:
+        min_brightness: 5%
+        max_brightness: 100%
+```
+
+### `light.addressable_set` Action
+
+Set individual LEDs on an addressable strip.
+
+```yaml
+on_...:
+  - light.addressable_set:
+      id: my_strip
+      range_from: 0
+      range_to: 9
+      red: 100%
+      green: 0%
+      blue: 0%
+```
+
+### Triggers
+
+```yaml
+light:
+  - platform: ...
+    on_turn_on:
+      - logger.log: "Light turned on"
+    on_turn_off:
+      - logger.log: "Light turned off"
+    on_state:
+      - logger.log: "Light state changed"
+```
+
+### `light.is_on` / `light.is_off` Condition
+
+```yaml
+on_...:
+  if:
+    condition:
+      light.is_on: my_light
+    then:
+      - light.turn_off: my_light
+```
+
+---
+
+## Light Effects
+
+ESPHome has many built-in effects. List the ones you want in the `effects:` key; each appears as a selectable effect in Home Assistant.
+
+### Pulse
+
+Smoothly fades in and out.
+
+```yaml
+effects:
+  - pulse:
+      name: "Slow Pulse"
+      transition_length: 1s
+      update_interval: 2s
+      min_brightness: 0%
+      max_brightness: 100%
+```
+
+### Random
+
+Transitions to a randomly chosen color at each interval.
+
+```yaml
+effects:
+  - random:
+      name: "Color Random"
+      transition_length: 5s
+      update_interval: 7s
+```
+
+### Strobe
+
+Cycles through a list of colors with defined durations.
+
+```yaml
+effects:
+  - strobe:
+      name: "Red Blue Strobe"
+      colors:
+        - state: true
+          red: 100%
+          green: 0%
+          blue: 0%
+          duration: 200ms
+        - state: true
+          red: 0%
+          green: 0%
+          blue: 100%
+          duration: 200ms
+```
+
+### Flicker
+
+Simulates a candle flame by randomly varying brightness and color.
+
+```yaml
+effects:
+  - flicker:
+      alpha: 95%
+      intensity: 1.5%
+```
+
+### Addressable Effects (NeoPixel / addressable strips only)
+
+```yaml
+effects:
+  - addressable_rainbow:
+      speed: 10
+      width: 50
+  - addressable_color_wipe:
+      add_led_interval: 100ms
+      reverse: false
+  - addressable_scan:
+      move_interval: 100ms
+      scan_width: 1
+  - addressable_twinkle:
+      twinkle_probability: 5%
+      progress_interval: 4ms
+  - addressable_random_twinkle:
+  - addressable_fireworks:
+      spark_probability: 10%
+      fade_out_rate: 120
+  - addressable_flicker:
+      intensity: 5%
+```
+
+### WLED Effect
+
+Receive realtime UDP control from WLED-compatible software (Prismatik, LedFx, Hyperion).
+
+```yaml
+wled:
+
+light:
+  - platform: neopixelbus
+    effects:
+      - wled:
+          port: 21324
+```
+
+### E1.31 Effect
+
+Receive DMX-over-UDP from JINX, Hyperion.NG, and similar lighting control software.
+
+```yaml
+e131:
+  method: multicast
+
+light:
+  - platform: neopixelbus
+    num_leds: 189
+    effects:
+      - e131:
+          universe: 1
+          channels: RGB
+```
+
+---
+
+## Popular Light Platforms
+
+<CardGroup cols={2}>
+  <Card title="Binary Light" icon="toggle-right">
+    Simple on/off control using a binary output. The most basic light type.
+  </Card>
+  <Card title="Monochromatic Light" icon="sun">
+    Single-channel brightness control using a float (PWM) output.
+  </Card>
+  <Card title="RGB Light" icon="palette">
+    Three PWM outputs for red, green, and blue channels. Full color control.
+  </Card>
+  <Card title="RGBW / RGBWW Light" icon="star">
+    RGB plus separate white (and warm white) channels. Supports color temperature control.
+  </Card>
+  <Card title="NeoPixelBus" icon="zap">
+    Addressable LED strips (WS2812, SK6812, APA102, etc.) via the NeoPixelBus library.
+  </Card>
+  <Card title="FastLED" icon="zap">
+    Alternative addressable LED driver using the FastLED library. Supports many strip types.
+  </Card>
+  <Card title="Partition" icon="layout">
+    Split one addressable strip into independently controlled segments.
+  </Card>
+  <Card title="Color Temperature" icon="thermometer">
+    Cold/warm white dual-channel light with Home Assistant color temperature control.
+  </Card>
+</CardGroup>

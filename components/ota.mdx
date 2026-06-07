@@ -1,0 +1,159 @@
+---
+title: "OTA (Over-the-Air) Update Component Reference"
+sidebarTitle: "OTA"
+description: "Configure ESPHome over-the-air firmware updates: set passwords, enable safe mode, and use the HTTP OTA component for URL-based updates."
+---
+
+ESPHome supports updating device firmware wirelessly without a physical USB connection. As of ESPHome 2024.6.0, OTA functionality is organized as a *platform component* — each update mechanism is a separate platform under the `ota:` list key. The most common platform is `esphome`, which implements the native OTA protocol used by the ESPHome dashboard and CLI. Additional platforms include `http_request` for pull-based URL updates, `web_server` for browser-based uploads, and `zephyr_mcumgr` for nRF52 boards. Safe mode (automatic recovery) is automatically enabled alongside OTA and can be found at the [Safe Mode](/guides/ota-updates).
+
+## Minimal Example
+
+```yaml
+ota:
+  - platform: esphome
+    password: !secret ota_password
+```
+
+## Configuration Variables (All Platforms)
+
+<ParamField path="on_begin" type="Automation">
+  Triggered when an OTA update starts. Keep the automation fast — OTA blocks the main loop while in progress and long-running actions will cause the update to fail.
+</ParamField>
+
+<ParamField path="on_progress" type="Automation">
+  Triggered approximately once per second during an update. The variable `x` (float, 0–100) contains the current percentage. Suitable for driving a progress indicator on a display.
+</ParamField>
+
+<ParamField path="on_end" type="Automation">
+  Triggered when the update has completed successfully, just before the device reboots into the new firmware. At this point the OTA process is finished and longer-running actions are safe.
+</ParamField>
+
+<ParamField path="on_error" type="Automation">
+  Triggered when the update fails. The variable `x` (int) contains the internal error code.
+</ParamField>
+
+<ParamField path="on_state_change" type="Automation">
+  Triggered on every OTA state transition. The variable `state` is of type `OTAState` with values: `ota::OTA_STARTED`, `ota::OTA_IN_PROGRESS`, `ota::OTA_COMPLETED`, `ota::OTA_ERROR`.
+</ParamField>
+
+## Available Platforms
+
+### `esphome` Platform (Native OTA)
+
+The default OTA method used by `esphome upload`, `esphome run`, and the dashboard. Communicates over the ESPHome native protocol.
+
+```yaml
+ota:
+  - platform: esphome
+    password: !secret ota_password
+```
+
+**Platform-specific variables:**
+
+<ParamField path="password" type="string">
+  Password required to authorize firmware uploads. Strongly recommended for all production devices. Leave empty to disable password protection (not recommended).
+</ParamField>
+
+### `http_request` Platform (Pull-Based OTA)
+
+Pulls firmware from a remote HTTP/HTTPS URL. Useful for fleet updates without direct network access to devices.
+
+```yaml
+ota:
+  - platform: http_request
+    url: https://firmware.example.com/devices/mydevice/firmware.bin
+    verify_ssl: true
+```
+
+### `web_server` Platform
+
+Enables firmware upload through the device's built-in web server UI or via `esphome upload --ota-platform web_server`.
+
+```yaml
+ota:
+  - platform: web_server
+```
+
+## Advanced Example with Progress Feedback
+
+```yaml
+ota:
+  - platform: esphome
+    password: !secret ota_password
+    on_begin:
+      then:
+        - logger.log: "OTA update starting…"
+        - light.turn_on:
+            id: status_led
+            effect: "Fast Blink"
+
+    on_progress:
+      then:
+        - logger.log:
+            format: "OTA progress: %.1f%%"
+            args: ["x"]
+
+    on_end:
+      then:
+        - logger.log: "OTA complete — rebooting"
+        - light.turn_off: status_led
+
+    on_error:
+      then:
+        - logger.log:
+            format: "OTA failed! Error code: %d"
+            args: ["x"]
+        - light.turn_on:
+            id: status_led
+            red: 100%
+            green: 0%
+            blue: 0%
+```
+
+## State Change Automation
+
+```yaml
+ota:
+  - platform: esphome
+    on_state_change:
+      then:
+        - if:
+            condition:
+              lambda: return state == ota::OTA_STARTED;
+            then:
+              - logger.log: "OTA started"
+        - if:
+            condition:
+              lambda: return state == ota::OTA_COMPLETED;
+            then:
+              - logger.log: "OTA completed successfully"
+```
+
+## Multiple OTA Platforms
+
+```yaml
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+  - platform: http_request
+    url: https://updates.myserver.com/firmware/living_room.bin
+```
+
+## Safe Mode
+
+Safe mode is automatically enabled when any OTA platform is configured. It provides a recovery mechanism if a bad firmware update prevents the device from functioning correctly. If the device fails to boot successfully within the configured `boot_is_good_after` window (default 60 seconds), it reverts to a minimal safe-mode firmware that only exposes OTA, allowing you to push a corrected build.
+
+For full safe mode configuration options, see the [Safe Mode](/guides/ota-updates).
+
+<Note>
+  OTA updates block the main application loop while in progress. Components that only update their output from `loop()` (e.g. some display drivers) cannot be used to show OTA progress. Use components with direct hardware write capabilities (GPIO LEDs, display components with immediate rendering) for progress indicators.
+</Note>
+
+<Warning>
+  Never leave OTA unprotected on a device accessible from an untrusted network. Always set a strong `password` on the `esphome` platform. Consider using [signed OTA verification](/components/esp32/#signed-ota-verification) on ESP32 for production deployments.
+</Warning>
+
+<Tip>
+  On ESP32, OTA rollback is enabled by default via `esp32.framework.advanced.enable_ota_rollback: true`. If the device crashes before `safe_mode` marks the boot as successful, the bootloader automatically rolls back to the previous working firmware. This requires the bootloader to be compiled with rollback support — serial-flash the first time to ensure the correct bootloader is installed.
+</Tip>

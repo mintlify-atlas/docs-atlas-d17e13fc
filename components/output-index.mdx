@@ -1,0 +1,223 @@
+---
+title: "Output Components: Low-Level Hardware Control"
+sidebarTitle: "Outputs"
+description: "ESPHome output components provide low-level hardware control for GPIO pins, PWM, DAC, and LED controllers used by lights, fans, and servos."
+---
+
+ESPHome's `output` domain provides the lowest-level hardware abstraction layer: it represents a physical output pin or peripheral as either a **binary** output (on/off only) or a **float** output (a continuous value from 0.0 to 1.0). Higher-level components — lights, fans, and servos — are built on top of outputs. You can also control outputs directly from automations for custom applications.
+
+There are two output categories:
+
+- **Binary outputs** — can only be fully ON or fully OFF (e.g. a simple GPIO pin).
+- **Float outputs** — accept any value between 0.0 and 1.0, typically driving PWM or DAC hardware.
+
+## Base Output Configuration
+
+```yaml
+output:
+  - platform: ledc      # ESP32 hardware PWM
+    pin: GPIO16
+    id: fan_pwm
+    frequency: 25000Hz
+    min_power: 0.10     # never go below 10% duty
+    max_power: 0.95     # never exceed 95% duty
+    zero_means_zero: true
+```
+
+<ParamField path="id" type="ID" required>
+  The ID used to reference this output from lights, fans, servos, or automations.
+</ParamField>
+
+<ParamField path="inverted" type="boolean" optional>
+  If `true`, the output logic is inverted. Defaults to `false`.
+</ParamField>
+
+<ParamField path="power_supply" type="ID" optional>
+  ID of a `power_supply` component that is automatically switched on when this output is enabled.
+</ParamField>
+
+### Float Output Only
+
+<ParamField path="min_power" type="float (0–1)" optional>
+  The minimum output value. When the associated entity (light/fan) requests a non-zero level below this value, `min_power` is used instead. Defaults to `0`.
+</ParamField>
+
+<ParamField path="max_power" type="float (0–1)" optional>
+  The maximum output value. Requests above this level are clamped. Defaults to `1`.
+</ParamField>
+
+<ParamField path="zero_means_zero" type="boolean" optional>
+  If `true`, an output level of 0.0 truly outputs 0 (not `min_power`). Defaults to `false`.
+</ParamField>
+
+<Note>
+  `min_power` and `max_power` are automatically clamped to ensure `0.0 ≤ min_power ≤ max_power ≤ 1.0`. This prevents invalid configurations.
+</Note>
+
+---
+
+## Output Actions
+
+### `output.turn_on`
+
+```yaml
+on_...:
+  - output.turn_on: my_output
+```
+
+### `output.turn_off`
+
+```yaml
+on_...:
+  - output.turn_off: my_output
+```
+
+### `output.set_level` (float outputs only)
+
+```yaml
+on_...:
+  - output.set_level:
+      id: fan_pwm
+      level: 75%
+```
+
+### `output.set_min_power` (float outputs only)
+
+Dynamically adjust the minimum power level at runtime.
+
+```yaml
+on_...:
+  - output.set_min_power:
+      id: fan_pwm
+      min_power: 20%
+```
+
+### `output.set_max_power` (float outputs only)
+
+Dynamically adjust the maximum power level at runtime.
+
+```yaml
+on_...:
+  - output.set_max_power:
+      id: fan_pwm
+      max_power: 80%
+```
+
+---
+
+## Lambda Calls
+
+```cpp
+// Binary output
+id(my_output).turn_on();
+id(my_output).turn_off();
+
+// Float output
+id(fan_pwm).set_level(0.75);  // 75%
+id(fan_pwm).set_min_power(0.1);
+id(fan_pwm).set_max_power(0.9);
+```
+
+---
+
+## Popular Output Platforms
+
+<CardGroup cols={2}>
+  <Card title="GPIO Output" icon="cpu">
+    Control a digital GPIO pin directly. The fundamental binary output used by relays, LEDs, and logic circuits.
+  </Card>
+  <Card title="LEDC (ESP32 PWM)" icon="activity">
+    ESP32's hardware LED Controller peripheral. Provides high-frequency PWM for dimming, motor control, and fan speed.
+  </Card>
+  <Card title="ESP8266 PWM" icon="activity">
+    Software PWM on ESP8266. Lower frequency and less accurate than ESP32 LEDC but widely used for basic dimming.
+  </Card>
+  <Card title="Slow PWM" icon="clock">
+    Low-frequency PWM using relay on/off cycles. Ideal for resistive heaters and slow-response loads.
+  </Card>
+  <Card title="Sigma Delta Output" icon="wave">
+    Sigma-delta modulation output for ESP32. Useful for audio and analog-like signals.
+  </Card>
+  <Card title="AC Dimmer" icon="sun">
+    TRIAC-based AC dimmer for mains dimmable loads. Requires a zero-crossing detection circuit.
+  </Card>
+  <Card title="DAC Output" icon="sliders">
+    ESP32 internal 8-bit DAC on GPIO25/GPIO26. True analog voltage output (0–3.3 V).
+  </Card>
+  <Card title="PCA9685" icon="layout">
+    16-channel I²C PWM LED/servo driver. Extend ESP32/8266 with 16 independent PWM channels.
+  </Card>
+</CardGroup>
+
+---
+
+## Using Outputs with Higher-Level Components
+
+Outputs are the building blocks consumed by lights, fans, and servos.
+
+### Monochromatic Light from PWM
+
+```yaml
+output:
+  - platform: ledc
+    id: light_pwm
+    pin: GPIO4
+
+light:
+  - platform: monochromatic
+    name: "Desk Lamp"
+    output: light_pwm
+    gamma_correct: 2.8
+```
+
+### RGB Light from Three PWM Outputs
+
+```yaml
+output:
+  - platform: ledc
+    id: red_channel
+    pin: GPIO16
+  - platform: ledc
+    id: green_channel
+    pin: GPIO17
+  - platform: ledc
+    id: blue_channel
+    pin: GPIO18
+
+light:
+  - platform: rgb
+    name: "RGB Strip"
+    red: red_channel
+    green: green_channel
+    blue: blue_channel
+```
+
+### Variable-Speed Fan from PWM
+
+```yaml
+output:
+  - platform: ledc
+    id: fan_speed
+    pin: GPIO19
+    frequency: 25000Hz
+
+fan:
+  - platform: speed
+    output: fan_speed
+    name: "Server Fan"
+    speed_count: 4
+```
+
+### Servo from PWM
+
+```yaml
+output:
+  - platform: ledc
+    id: servo_pwm
+    pin: GPIO13
+    frequency: 50Hz
+
+servo:
+  id: my_servo
+  output: servo_pwm
+```

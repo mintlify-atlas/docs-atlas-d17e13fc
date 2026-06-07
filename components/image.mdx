@@ -1,0 +1,269 @@
+---
+title: "Image Component: Show Graphics on ESPHome Displays"
+sidebarTitle: "Image"
+description: "Display PNG, BMP, JPEG, and GIF images on ESPHome screens. Covers local files, dithering, transparency, and the animation component."
+---
+
+ESPHome's `image` component lets you embed static graphics directly into your device's firmware and draw them on any compatible display. Images are converted to the target pixel format at compile time and stored in flash memory, so no SD card or external storage is needed. You can load local files, Material Design Icon SVGs, or even remote URLs — all processed automatically when you compile your project.
+
+## Minimal Example
+
+```yaml
+image:
+  - file: "images/logo.png"
+    id: my_logo
+    type: RGB565
+    resize: 120x80
+
+display:
+  - platform: ...
+    lambda: |-
+      it.image(0, 0, id(my_logo));
+```
+
+## Configuration Variables
+
+<ParamField path="file" type="string" required>
+  The image source. Options:
+  - **Local file**: path relative to your YAML file (e.g. `"images/logo.png"`).
+  - **Material Design Icon**: `"mdi:icon-name"` — automatically downloaded from Pictogrammers.
+  - **Material Design Light Icon**: `"mdil:icon-name"`.
+  - **Memory Icon**: `"memory:icon-name"`.
+  - **Remote URL**: `"https://media.esphome.io/logo/logo.png"` — downloaded at build time.
+</ParamField>
+
+<ParamField path="id" type="ID" required>
+  The ID used to reference the image in your display lambda (e.g. `id(my_logo)`).
+</ParamField>
+
+<ParamField path="type" type="enum" required>
+  How the image is encoded and stored in flash:
+  - `BINARY` — 1 bit per pixel. Best for 1-color displays. Only `chroma_key` transparency.
+  - `GRAYSCALE` — 8 bits per pixel. Full gray scale.
+  - `RGB565` — 16 bits per pixel. Lossy color. Standard for color TFT displays.
+  - `RGB` — 24 bits per pixel. Full color. 32 bits with alpha channel.
+</ParamField>
+
+<ParamField path="resize" type="string" optional>
+  Resize the image to fit within `WIDTHxHEIGHT` while preserving aspect ratio. Example: `"100x100"`.
+</ParamField>
+
+<ParamField path="transparency" type="enum" optional>
+  How transparency from the source image is handled:
+  - `opaque` (default) — ignore alpha channel.
+  - `chroma_key` — a specific color is treated as transparent and not drawn.
+  - `alpha_channel` — full per-pixel alpha stored (not available for `BINARY`). Best for LVGL blending.
+</ParamField>
+
+<ParamField path="invert_alpha" type="boolean" optional>
+  Invert colors (black ↔ white). Available for `BINARY` and `GRAYSCALE`. Useful for e-ink displays. Defaults to `false`.
+</ParamField>
+
+<ParamField path="dither" type="enum" optional>
+  Dithering method for `BINARY` and `GRAYSCALE` types:
+  - `NONE` (default) — nearest color.
+  - `FLOYDSTEINBERG` — Floyd-Steinberg error diffusion for smoother gradients.
+</ParamField>
+
+<ParamField path="byte_order" type="string" optional>
+  Byte order for `RGB565` images: `little_endian` (default) or `big_endian`. Displays and LVGL expect little-endian.
+</ParamField>
+
+---
+
+## Displaying Images
+
+Draw an image in a display lambda using `it.image()`.
+
+```yaml
+display:
+  - platform: ...
+    lambda: |-
+      // Top-left aligned (default)
+      it.image(0, 0, id(my_image));
+
+      // Right-aligned
+      it.image(it.get_width(), 0, id(my_image), ImageAlign::TOP_RIGHT);
+
+      // Center-aligned
+      it.image(it.get_width()/2, it.get_height()/2, id(my_image),
+               ImageAlign::CENTER);
+```
+
+### Binary Image Color Override
+
+For `BINARY` images, you can pass foreground and background colors:
+
+```yaml
+lambda: |-
+  // Red foreground, blue background
+  it.image(0, 0, id(my_icon), id(red), id(blue));
+
+  // Inverted (white on black)
+  it.image(0, 0, id(my_icon), COLOR_OFF, COLOR_ON);
+```
+
+---
+
+## Material Design Icons
+
+Load any MDI icon by its slug. ESPHome downloads and converts the SVG automatically.
+
+```yaml
+image:
+  - file: mdi:alert-outline
+    id: icon_alert
+    type: GRAYSCALE
+    transparency: alpha_channel
+    resize: 48x48
+
+  - file: mdi:wifi
+    id: icon_wifi
+    type: BINARY
+    resize: 32x32
+
+display:
+  - platform: ...
+    lambda: |-
+      it.image(8, 8, id(icon_wifi));
+      it.image(50, 8, id(icon_alert));
+```
+
+---
+
+## Remote Images (Downloaded at Build Time)
+
+```yaml
+image:
+  - file: https://media.esphome.io/logo/logo.png
+    id: esphome_logo
+    type: RGB565
+    resize: 200x60
+```
+
+<Note>
+  Remote images are downloaded once at compile time and cached. They are baked into the firmware — the device does not need internet access at runtime.
+</Note>
+
+---
+
+## Setting Defaults for Multiple Images
+
+When most images share the same encoding, use the `defaults:` shorthand to avoid repetition.
+
+```yaml
+image:
+  defaults:
+    type: RGB565
+    resize: 100x100
+    transparency: opaque
+  images:
+    - file: "assets/cat.png"
+      id: img_cat
+    - file: "assets/dog.png"
+      id: img_dog
+    - file: "assets/logo.png"
+      id: img_logo
+      resize: 200x50   # overrides the default
+```
+
+---
+
+## Grouping Images by Type
+
+```yaml
+image:
+  defaults:
+    resize: 80x80
+
+  grayscale:
+    - file: "icons/temp.png"
+      id: icon_temp
+    - file: "icons/humid.png"
+      id: icon_humid
+
+  rgb565:
+    alpha_channel:
+      - file: "images/splash.png"
+        id: splash
+    opaque:
+      - file: "images/background.png"
+        id: bg
+```
+
+---
+
+## Transparency Options
+
+### `chroma_key`
+
+A specific color (by default magenta/pink) represents transparent pixels that are skipped during rendering. The background shows through.
+
+```yaml
+image:
+  - file: "sprite.png"
+    id: sprite
+    type: BINARY
+    transparency: chroma_key
+```
+
+### `alpha_channel`
+
+Each pixel stores an additional alpha byte. With LVGL, this enables smooth anti-aliased blending. With the display rendering lambda, pixels are either fully drawn or fully skipped based on the alpha value.
+
+```yaml
+image:
+  - file: "mdi:home"
+    id: home_icon
+    type: GRAYSCALE
+    transparency: alpha_channel
+    resize: 64x64
+```
+
+---
+
+## E-Ink / E-Paper Display Example
+
+For e-paper displays, use `BINARY` type with `invert_alpha: true` if the source has a white background that needs to be transparent.
+
+```yaml
+image:
+  - file: "images/logo_black.png"
+    id: logo_bw
+    type: BINARY
+    dither: FLOYDSTEINBERG
+    transparency: chroma_key
+
+display:
+  - platform: waveshare_epaper
+    cs_pin: GPIO5
+    dc_pin: GPIO17
+    busy_pin: GPIO4
+    reset_pin: GPIO16
+    model: 2.90in
+    lambda: |-
+      it.fill(COLOR_OFF);
+      it.image(10, 10, id(logo_bw));
+      it.printf(0, 80, id(font_16), "%.1f °C", id(temp).state);
+```
+
+---
+
+## Animation Component
+
+The `animation` component extends `image` to support multi-frame GIF-like animations. Each frame is stored individually in flash.
+
+```yaml
+animation:
+  - file: "animation.gif"
+    id: my_anim
+    type: RGB565
+    resize: 64x64
+
+display:
+  - platform: ...
+    update_interval: 50ms   # fast enough for animation
+    lambda: |-
+      id(my_anim).next_frame();
+      it.image(0, 0, id(my_anim).get_current_frame());
+```

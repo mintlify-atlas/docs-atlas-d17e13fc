@@ -1,0 +1,255 @@
+---
+title: "Sensor Components in ESPHome: Measuring the World"
+sidebarTitle: "Sensors"
+description: "ESPHome sensor components read physical measurements and expose them to Home Assistant. Covers filters, throttling, calibration, and 200+ sensor types."
+---
+
+ESPHome's `sensor` domain is the backbone of physical measurement: it reads numeric values from hardware — temperature, humidity, pressure, CO₂, distance, power, and hundreds more — then publishes those values to Home Assistant (or MQTT) in real time. Every sensor platform shares a common base configuration that handles naming, units, filtering, and automation triggers, so once you understand the base, you understand every sensor in ESPHome.
+
+## Base Sensor Configuration
+
+All sensors inherit these configuration variables. You only need to supply the ones you want to override — sensible defaults are chosen automatically.
+
+```yaml
+sensor:
+  - platform: dht
+    pin: GPIO4
+    model: DHT22
+    temperature:
+      name: "Living Room Temperature"
+      unit_of_measurement: "°C"
+      device_class: temperature
+      state_class: measurement
+      accuracy_decimals: 1
+      filters:
+        - sliding_window_moving_average:
+            window_size: 5
+            send_every: 5
+    humidity:
+      name: "Living Room Humidity"
+      unit_of_measurement: "%"
+    update_interval: 60s
+```
+
+<ParamField path="id" type="string" optional>
+  Manually specify the ID used for code generation. At least one of `id` and `name` must be specified.
+</ParamField>
+
+<ParamField path="name" type="string" optional>
+  The name for the sensor as it appears in Home Assistant. Set to `None` to inherit the device's `friendly_name`.
+</ParamField>
+
+<ParamField path="unit_of_measurement" type="string" optional>
+  Manually set the unit of measurement advertised to Home Assistant (e.g. `"°C"`, `"hPa"`, `"W"`). Does not perform unit conversion.
+</ParamField>
+
+<ParamField path="device_class" type="string" optional>
+  The [Home Assistant device class](https://www.home-assistant.io/integrations/sensor/#device-class) for the sensor (e.g. `temperature`, `humidity`, `power`). Set to `""` to remove a default device class.
+</ParamField>
+
+<ParamField path="state_class" type="string" optional>
+  The [Home Assistant state class](https://developers.home-assistant.io/docs/core/entity/sensor/#available-state-classes) (`measurement`, `total`, `total_increasing`). Set to `""` to remove the default.
+</ParamField>
+
+<ParamField path="icon" type="icon" optional>
+  Manually override the MDI icon shown in the Home Assistant frontend (e.g. `"mdi:thermometer"`).
+</ParamField>
+
+<ParamField path="accuracy_decimals" type="int" optional>
+  Number of digits after the decimal point reported to Home Assistant. Controls display precision; does not change the raw value.
+</ParamField>
+
+<ParamField path="filters" type="list" optional>
+  A list of [sensor filters](#sensor-filters) applied in sequence before the value is published.
+</ParamField>
+
+<ParamField path="internal" type="boolean" optional>
+  If `true`, the sensor will not be exposed to the frontend. Setting only an `id` without a `name` implicitly sets this to `true`. Defaults to `false`.
+</ParamField>
+
+<ParamField path="force_update" type="boolean" optional>
+  If `true`, Home Assistant creates a state-changed event even when the value stays the same. Useful for Grafana but increases database size. Defaults to `false`.
+</ParamField>
+
+<ParamField path="disabled_by_default" type="boolean" optional>
+  If `true`, the entity is added to Home Assistant but hidden until the user manually enables it. Defaults to `false`.
+</ParamField>
+
+<ParamField path="entity_category" type="string" optional>
+  The [entity category](https://developers.home-assistant.io/docs/core/entity/#generic-properties) (`config`, `diagnostic`). Set to `""` to remove the default.
+</ParamField>
+
+<ParamField path="expire_after" type="Time" optional>
+  MQTT only. Time after which the sensor value is marked as expired/unknown if no new update is received.
+</ParamField>
+
+### Automation Triggers
+
+<ParamField path="on_value" type="Automation" optional>
+  Triggered each time a new filtered value is published. The value is available as `x`.
+</ParamField>
+
+<ParamField path="on_value_range" type="Automation" optional>
+  Triggered when the published value transitions from outside to inside a defined range (`above`/`below`).
+</ParamField>
+
+<ParamField path="on_raw_value" type="Automation" optional>
+  Triggered when a raw value is received, before any filters are applied. The raw value is available as `x`.
+</ParamField>
+
+---
+
+## Sensor Filters
+
+Filters let you pre-process sensor values before they are published. Define them in a `filters:` block; they are applied in order.
+
+```yaml
+filters:
+  - offset: 2.0                  # add a fixed offset
+  - multiply: 1.05               # scale by a factor
+  - calibrate_linear:            # two-point linear calibration
+      - 0.0 -> 0.0
+      - 100.0 -> 102.5
+  - filter_out: 0.0              # drop specific values
+  - median:                      # rolling median
+      window_size: 5
+      send_every: 5
+  - sliding_window_moving_average:
+      window_size: 15
+      send_every: 15
+  - exponential_moving_average:
+      alpha: 0.1
+      send_every: 15
+  - throttle: 10s                # max one update per 10 s
+  - throttle_average: 10s        # average over 10 s window, then publish
+  - heartbeat: 60s               # publish at least once per 60 s
+  - debounce: 0.5s               # ignore jitter shorter than 0.5 s
+  - delta: 0.5                   # only publish if changed by ≥ 0.5
+  - lambda: return x * (9.0/5.0) + 32.0;   # arbitrary C++ transform
+```
+
+<Tip>
+  Combine `throttle` and `delta` with `or` to publish on time *or* on significant change:
+  ```yaml
+  filters:
+    - or:
+      - throttle: 60s
+      - delta: 1.0
+  ```
+</Tip>
+
+### Converting Celsius to Fahrenheit
+
+```yaml
+sensor:
+  - platform: dht
+    pin: GPIO4
+    model: DHT22
+    temperature:
+      name: "Temperature (°F)"
+      filters:
+        - lambda: return x * (9.0/5.0) + 32.0;
+      unit_of_measurement: "°F"
+```
+
+---
+
+## Sensor Automations
+
+### `on_value`
+
+Fired after filters pass a new value. Use `x` for the value.
+
+```yaml
+sensor:
+  - platform: dht
+    pin: GPIO4
+    model: DHT22
+    temperature:
+      name: "Temperature"
+      on_value:
+        then:
+          - light.turn_on:
+              id: status_led
+              red: !lambda "return x / 50.0;"
+```
+
+### `on_value_range`
+
+Fired when the value crosses into a defined range. Ideal for threshold-based automation.
+
+```yaml
+sensor:
+  - platform: adc
+    pin: GPIO34
+    name: "Tank Level"
+    on_value_range:
+      - below: 10.0
+        then:
+          - switch.turn_on: pump
+      - above: 90.0
+        then:
+          - switch.turn_off: pump
+```
+
+### `sensor.in_range` Condition
+
+```yaml
+on_...:
+  if:
+    condition:
+      sensor.in_range:
+        id: my_sensor
+        above: 20.0
+        below: 80.0
+    then:
+      - logger.log: "Value is in range"
+```
+
+### Lambda Calls
+
+```cpp
+// Manually push a value
+id(my_sensor).publish_state(42.0);
+
+// Read the current filtered state
+float val = id(my_sensor).get_state();
+
+// Read the raw (unfiltered) state
+float raw = id(my_sensor).get_raw_state();
+```
+
+---
+
+## Popular Sensor Platforms
+
+<CardGroup cols={2}>
+  <Card title="DHT Temperature & Humidity" icon="thermometer">
+    Classic DHT11/DHT22 sensors on a single GPIO pin. Simple, low-cost, and widely available.
+  </Card>
+  <Card title="BME280 / BME680" icon="cloud">
+    Bosch I²C sensors delivering temperature, humidity, pressure — and air quality on the 680.
+  </Card>
+  <Card title="AHT10 / AHT20" icon="droplets">
+    High-accuracy I²C temperature and humidity sensors popular in many IoT boards.
+  </Card>
+  <Card title="Dallas DS18B20" icon="water">
+    One-Wire temperature probe. Supports multiple sensors on a single pin with unique addresses.
+  </Card>
+  <Card title="ADC (Analog to Digital)" icon="gauge">
+    Read raw voltages on ADC-capable GPIO pins. Useful for resistive sensors and voltage dividers.
+  </Card>
+  <Card title="Pulse Counter" icon="activity">
+    Count pulses on a GPIO — ideal for water meters, gas meters, and power meters with S0 output.
+  </Card>
+  <Card title="INA219 / INA3221" icon="zap">
+    I²C current/power monitor IC. Measure voltage, current, and power on DC circuits up to 26 V.
+  </Card>
+  <Card title="VL53L0X / VL53L1X" icon="ruler">
+    Time-of-flight distance sensors that measure range from 1 cm to 4 m over I²C.
+  </Card>
+</CardGroup>
+
+<Note>
+  ESPHome supports 200+ sensor platforms. For the full list, visit the [ESPHome sensor component documentation](https://esphome.io/components/sensor/).
+</Note>

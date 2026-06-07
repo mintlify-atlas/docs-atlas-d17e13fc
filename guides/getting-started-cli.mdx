@@ -1,0 +1,270 @@
+---
+title: "Get Started with ESPHome from the Command Line"
+sidebarTitle: "Command Line"
+description: "Install ESPHome via pip or Docker, create your first configuration, and compile and flash your ESP device from the command line."
+---
+
+ESPHome has a full-featured command-line interface that lets you create configurations, compile firmware, flash devices, and stream logs — all from your terminal. This guide is ideal if you prefer scripting, want to integrate ESPHome into a CI pipeline, or simply like staying in the command line. If you'd rather use a web UI, see the [Home Assistant add-on guide](/guides/getting-started-ha).
+
+## Install ESPHome
+
+See [Installing ESPHome](/guides/installing-esphome) for the full platform-by-platform walkthrough. The quick versions are below.
+
+<CodeGroup>
+```bash pip (Linux / macOS)
+# Create and activate a virtual environment (recommended)
+python3 -m venv venv
+source venv/bin/activate
+
+# Install ESPHome
+pip install esphome
+
+# Verify
+esphome version
+```
+
+```bash pip (Windows)
+# Open Command Prompt, then:
+pip3 install wheel
+pip3 install esphome
+
+# Verify
+esphome version
+```
+
+```bash Docker
+# Pull the latest stable image
+docker pull ghcr.io/esphome/esphome
+
+# Verify
+docker run --rm ghcr.io/esphome/esphome version
+```
+</CodeGroup>
+
+### Docker Compose
+
+If you prefer Docker Compose, create a `docker-compose.yml` in your project directory:
+
+```yaml
+services:
+  esphome:
+    container_name: esphome
+    image: ghcr.io/esphome/esphome
+    volumes:
+      - /path/to/esphome/config:/config
+      - /etc/localtime:/etc/localtime:ro
+    restart: always
+    privileged: true
+    network_mode: host
+    environment:
+      - USERNAME=admin
+      - PASSWORD=ChangeMe
+```
+
+Start the container with `docker compose up -d`. The ESPHome Device Builder web interface is then available at `http://localhost:6052`.
+
+<Warning>
+  On macOS, Docker cannot pass USB devices through to containers due to hypervisor limitations. You will not be able to flash ESP devices via USB on Mac. OTA (wireless) updates and all other features work normally. Web-based flashing via [ESPHome Web](https://web.esphome.io/) is also available as an alternative.
+</Warning>
+
+<Note>
+  If you back your Docker config volume with an NFS share, mount it with the `nolock` option. Without it, PlatformIO (used internally by ESPHome) may hang on startup. See [platformio-core#3089](https://github.com/platformio/platformio-core/issues/3089).
+</Note>
+
+## Connect Your ESP Device
+
+For the very first firmware install, you need to connect your ESP32 or ESP8266 to your computer via a USB data cable.
+
+<Note>
+  Initial installation via USB is the most involved step for new users — especially picking the right serial port. Later updates happen wirelessly over OTA. Follow the [Physical Device Connection guide](https://esphome.io/guides/physical_device_connection/) for step-by-step serial port identification on each OS.
+</Note>
+
+On Linux, your device typically appears as `/dev/ttyUSB0` or `/dev/ttyACM0`. You may need to add your user to the `dialout` group:
+
+```bash
+sudo usermod -a -G dialout $USER
+# Log out and back in for this to take effect
+```
+
+On macOS, look for `/dev/cu.usbserial-*` or `/dev/cu.SLAB_USBtoUART`.
+
+On Windows, check Device Manager for a `COM` port (e.g., `COM3`).
+
+## Create a Configuration
+
+ESPHome's setup wizard interactively creates a new configuration file. Run it with the name you want to give your config:
+
+```bash
+esphome wizard livingroom.yaml
+```
+
+With Docker:
+
+```bash
+docker run --rm -v "${PWD}":/config -it ghcr.io/esphome/esphome wizard livingroom.yaml
+```
+
+The wizard asks for:
+1. Your board type (ESP32, ESP8266, etc.)
+2. Your specific board variant
+3. Your Wi-Fi SSID and password
+
+At the end, `livingroom.yaml` is created in the current directory. It will look roughly like this:
+
+```yaml
+esphome:
+  name: livingroom
+  friendly_name: Living Room
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+
+api:
+  encryption:
+    key: "your-generated-api-key"
+
+ota:
+  - platform: esphome
+    password: "your-ota-password"
+
+wifi:
+  ssid: "YourWiFiSSID"
+  password: "YourWiFiPassword"
+
+  ap:
+    ssid: "Livingroom Fallback Hotspot"
+    password: "fallback-password"
+```
+
+## Add Components
+
+Open `livingroom.yaml` in your editor and add components. For example, a GPIO switch and a GPIO binary sensor:
+
+```yaml
+switch:
+  - platform: gpio
+    name: "Living Room Dehumidifier"
+    pin: GPIO5
+
+binary_sensor:
+  - platform: gpio
+    name: "Living Room Window"
+    pin:
+      number: GPIO0
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+```
+
+ESPHome will automatically translate board-specific pin aliases (e.g., `D1` on a NodeMCU) to the correct GPIO number, so you can use either format.
+
+## Compile and Flash
+
+Once your configuration is ready, compile and flash it with a single command:
+
+```bash
+esphome run livingroom.yaml
+```
+
+ESPHome will:
+1. Validate the configuration YAML
+2. Generate C++ source code
+3. Compile the firmware via PlatformIO
+4. Detect a connected serial device and flash it
+5. Switch to streaming live logs once the device boots
+
+The first compilation takes 2–5 minutes as PlatformIO downloads the required toolchain and libraries. Subsequent builds are much faster due to caching.
+
+With Docker on Linux (passing the USB device through):
+
+```bash
+docker run --rm --privileged \
+  -v "${PWD}":/config \
+  --device=/dev/ttyUSB0 \
+  -it ghcr.io/esphome/esphome run livingroom.yaml
+```
+
+<Note>
+  Alternatively, you can download the compiled `.bin` and flash it manually using [ESPHome Web](https://web.esphome.io/) or `esptool`. See the [FAQ](https://esphome.io/guides/faq#esphome-esptool) for details.
+</Note>
+
+## View Logs
+
+After the first flash, you can stream logs over Wi-Fi (no USB required) at any time:
+
+```bash
+esphome logs livingroom.yaml
+```
+
+With Docker:
+
+```bash
+docker run --rm -v "${PWD}":/config -it ghcr.io/esphome/esphome logs livingroom.yaml
+```
+
+ESPHome resolves the device hostname (e.g., `livingroom.local`) via mDNS and connects automatically. If your network blocks mDNS, pass `--device <IP_ADDRESS>` to specify the IP directly.
+
+## OTA Updates
+
+After the initial USB flash, every subsequent update is delivered over the air. Just run the same `run` command — ESPHome detects that the device is already on the network and performs a wireless OTA update automatically:
+
+```bash
+# Edit your config, then deploy wirelessly
+esphome run livingroom.yaml
+```
+
+With Docker:
+
+```bash
+docker run --rm -v "${PWD}":/config -it ghcr.io/esphome/esphome run livingroom.yaml
+```
+
+No USB cable, no physical access needed. 🎉
+
+## Home Assistant Discovery
+
+Once your device is on the network, Home Assistant will discover it automatically (within about 5 minutes). Go to **Settings → Devices & Services** and you should see the ESPHome integration offering to add your new device.
+
+To add it manually, click **Add Integration**, search for **ESPHome**, and enter `livingroom.local` (replace `livingroom` with your device name) or the device's IP address.
+
+## Bonus: ESPHome Device Builder
+
+The ESPHome Device Builder web UI (the same interface available in the Home Assistant add-on) can also be run standalone:
+
+```bash
+# Install dashboard extras
+pip install tornado esptool
+
+# Start the web UI (config/ is the directory with your YAML files)
+esphome dashboard config/
+```
+
+With Docker (Linux — host networking required for device online-status indicators):
+
+```bash
+docker run --rm --net=host -v "${PWD}":/config -it ghcr.io/esphome/esphome
+```
+
+With Docker (macOS — host networking doesn't work, use ping-based discovery instead):
+
+```bash
+docker run --rm -p 6052:6052 \
+  -e ESPHOME_DASHBOARD_USE_PING=true \
+  -v "${PWD}":/config \
+  -it ghcr.io/esphome/esphome
+```
+
+Open `http://localhost:6052` in your browser. Log level can be controlled with the `ESPHOME_LOG_LEVEL` environment variable (default: `INFO`).
+
+## Where to Go Next
+
+- **[Component Reference](https://esphome.io/components/)** — explore all available sensors, outputs, displays, and integrations
+- **[CLI Reference](https://esphome.io/guides/cli/)** — full documentation for all `esphome` subcommands and flags
+- **[Home Assistant Guide](/guides/getting-started-ha)** — if you'd prefer the web UI experience
+- **[Security Best Practices](https://esphome.io/guides/security_best_practices/)** — harden your devices for production use
+- **[FAQ](https://esphome.io/guides/faq/)** — solutions to common problems

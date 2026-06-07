@@ -1,0 +1,234 @@
+---
+title: "Switch Components: Control Relays and GPIO Outputs"
+sidebarTitle: "Switches"
+description: "ESPHome switch components control binary on/off outputs like relays and GPIO pins, and expose them as switches in Home Assistant."
+---
+
+ESPHome's `switch` domain represents any output that has exactly two states — on or off — and exposes it as a Home Assistant `switch` entity. The most common use is controlling relay modules, but switches also power template logic, UART sequences, and output-pin abstractions. Every switch platform inherits a common set of configuration variables for naming, state restoration, and automation triggers.
+
+## Base Switch Configuration
+
+```yaml
+switch:
+  - platform: gpio
+    pin: GPIO5
+    name: "Irrigation Pump"
+    device_class: switch
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - logger.log: "Pump started"
+    on_turn_off:
+      - logger.log: "Pump stopped"
+```
+
+<ParamField path="id" type="string" optional>
+  Manually specify the ID for code generation. At least one of `id` and `name` must be specified.
+</ParamField>
+
+<ParamField path="name" type="string" optional>
+  The name for the switch in Home Assistant. Set to `None` to inherit the device's `friendly_name`.
+</ParamField>
+
+<ParamField path="icon" type="icon" optional>
+  Manually override the MDI icon shown in the frontend.
+</ParamField>
+
+<ParamField path="inverted" type="boolean" optional>
+  If `true`, the reported state is inverted (ON becomes OFF and vice versa). Defaults to `false`.
+</ParamField>
+
+<ParamField path="restore_mode" type="enum" optional>
+  Controls the initial switch state on boot:
+  - `ALWAYS_OFF` (default) — always start off.
+  - `ALWAYS_ON` — always start on.
+  - `RESTORE_DEFAULT_OFF` — restore previous state, default to off.
+  - `RESTORE_DEFAULT_ON` — restore previous state, default to on.
+  - `RESTORE_INVERTED_DEFAULT_OFF` — restore inverted state, default to off.
+  - `RESTORE_INVERTED_DEFAULT_ON` — restore inverted state, default to on.
+  - `DISABLED` — leave initial state to the underlying platform.
+</ParamField>
+
+<ParamField path="device_class" type="string" optional>
+  The [Home Assistant device class](https://www.home-assistant.io/integrations/switch/#device-class) for the switch. Controls icon behavior in the frontend.
+</ParamField>
+
+<ParamField path="internal" type="boolean" optional>
+  If `true`, the switch is not exposed to the frontend. Defaults to `false`.
+</ParamField>
+
+<ParamField path="disabled_by_default" type="boolean" optional>
+  If `true`, the entity is hidden in Home Assistant until manually enabled. Defaults to `false`.
+</ParamField>
+
+<ParamField path="entity_category" type="string" optional>
+  The entity category (`config`, `diagnostic`). Set to `""` to remove the default.
+</ParamField>
+
+---
+
+## Switch Actions
+
+### `switch.turn_on`
+
+```yaml
+on_...:
+  - switch.turn_on: relay_1
+```
+
+### `switch.turn_off`
+
+```yaml
+on_...:
+  - switch.turn_off: relay_1
+```
+
+### `switch.toggle`
+
+```yaml
+on_...:
+  - switch.toggle: relay_1
+```
+
+### `switch.control`
+
+Useful when the desired state is computed dynamically.
+
+```yaml
+on_...:
+  - switch.control:
+      id: relay_1
+      state: !lambda "return id(motion_sensor).state;"
+```
+
+<ParamField path="id" type="ID" required>The switch to control.</ParamField>
+<ParamField path="state" type="boolean (templatable)" required>
+  `true` to turn on, `false` to turn off. Accepts lambda expressions.
+</ParamField>
+
+### `switch.is_on` / `switch.is_off` Condition
+
+```yaml
+on_...:
+  if:
+    condition:
+      switch.is_on: relay_1
+    then:
+      - switch.turn_off: relay_1
+```
+
+---
+
+## Switch Triggers
+
+### `on_turn_on` / `on_turn_off`
+
+Fire after the switch acknowledges the new state.
+
+```yaml
+switch:
+  - platform: gpio
+    pin: GPIO5
+    name: "Boiler"
+    on_turn_on:
+      - logger.log: "Boiler ON"
+    on_turn_off:
+      - logger.log: "Boiler OFF"
+```
+
+### `on_state`
+
+Fires on any state change. The new state is available as boolean `x`.
+
+```yaml
+switch:
+  - platform: gpio
+    pin: GPIO5
+    name: "Fan"
+    on_state:
+      - light.control:
+          id: fan_indicator_led
+          state: !lambda "return x;"
+```
+
+---
+
+## Lambda Calls
+
+```cpp
+// Read state
+if (id(my_switch).state) { /* ON */ }
+
+// Change state
+id(my_switch).turn_on();
+id(my_switch).turn_off();
+id(my_switch).toggle();
+id(my_switch).control(true);
+
+// Publish a state without changing hardware
+id(my_switch).publish_state(true);
+```
+
+<Warning>
+  `publish_state()` only changes the reported state — it does not affect the underlying hardware. Use `turn_on()`, `turn_off()`, or `toggle()` to actually change the output.
+</Warning>
+
+---
+
+## Popular Switch Platforms
+
+<CardGroup cols={2}>
+  <Card title="GPIO Switch" icon="cpu">
+    Control a digital GPIO pin directly. Ideal for relay modules, LEDs, and other digital loads.
+  </Card>
+  <Card title="Template Switch" icon="code">
+    Synthesize a switch from C++ lambdas. Useful for virtual switches and complex logic.
+  </Card>
+  <Card title="Output Switch" icon="toggle-right">
+    Wrap any `output` component as a switch entity. Bridges low-level outputs to the switch domain.
+  </Card>
+  <Card title="Restart Switch" icon="refresh-cw">
+    Trigger a device restart from Home Assistant. Always useful for remote management.
+  </Card>
+  <Card title="Shutdown Switch" icon="power">
+    Gracefully shut down the device. Useful for battery-powered devices.
+  </Card>
+  <Card title="Safe Mode Switch" icon="shield">
+    Boot into safe mode. Allows recovery when a bad config prevents normal operation.
+  </Card>
+  <Card title="UART Switch" icon="terminal">
+    Send a configured UART byte sequence when the switch is toggled.
+  </Card>
+  <Card title="Modbus Switch" icon="network">
+    Control Modbus coil registers over RS-485, exposing them as Home Assistant switches.
+  </Card>
+</CardGroup>
+
+## Complete Example: Timed Relay with Interlock
+
+```yaml
+switch:
+  - platform: gpio
+    pin: GPIO5
+    id: relay_a
+    name: "Relay A"
+    restore_mode: ALWAYS_OFF
+    interlock: [relay_b]       # only one can be on at a time
+    interlock_wait_time: 200ms
+
+  - platform: gpio
+    pin: GPIO6
+    id: relay_b
+    name: "Relay B"
+    restore_mode: ALWAYS_OFF
+    interlock: [relay_a]
+    interlock_wait_time: 200ms
+
+  - platform: template
+    name: "Timed Pump (5 min)"
+    turn_on_action:
+      - switch.turn_on: relay_a
+      - delay: 5min
+      - switch.turn_off: relay_a
+    turn_off_action:
+      - switch.turn_off: relay_a
+```

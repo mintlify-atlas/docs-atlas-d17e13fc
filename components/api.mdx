@@ -1,0 +1,179 @@
+---
+title: "Native API Component for Home Assistant Integration"
+sidebarTitle: "Native API"
+description: "The ESPHome native API enables direct communication with Home Assistant and other clients over a fast, encrypted protobuf TCP protocol on port 6053."
+---
+
+The ESPHome native API provides a highly optimized, low-latency TCP protocol based on protocol buffers for direct communication between ESPHome devices and clients such as Home Assistant and ioBroker. Adding `api:` to your configuration is all that's needed — Home Assistant will automatically discover the device (within ~5 minutes) and offer one-click integration setup. Compared to MQTT, the native API is roughly 10× more efficient for binary sensor payloads, requires no external broker, and supports real-time bidirectional data exchange including user-defined actions.
+
+## Minimal Example
+
+```yaml
+api:
+```
+
+## Configuration Variables
+
+<ParamField path="port" type="int">
+  The TCP port the API server listens on. Defaults to `6053`.
+</ParamField>
+
+<ParamField path="encryption" type="mapping">
+  Enable noise-protocol encryption for all API traffic. Highly recommended for production deployments.
+
+  - **key** (*Optional*, string): A 32-byte base64-encoded encryption key. Generate one from the ESPHome dashboard or the native API docs page. If omitted, the key can be set at runtime, but encryption will not be active until it is.
+</ParamField>
+
+<ParamField path="reboot_timeout" type="Time">
+  How long to wait without any client connecting before rebooting. Catches cases where the low-level IP stack reports a connection but the API cannot actually accept clients. Set to `0s` to disable. Defaults to `15min`.
+</ParamField>
+
+<ParamField path="batch_delay" type="Time">
+  Batching window for outgoing state update messages. Larger values group more updates per packet (less traffic); smaller values reduce latency. Range: `0ms`–`65535ms`. Defaults to `100ms`.
+</ParamField>
+
+<ParamField path="max_connections" type="int">
+  Maximum simultaneous API client connections (1–20). Statically allocated at compile time. Defaults to `4` on ESP8266/RP2040, `5` on ESP32/BK72xx/RTL87xx/LN882x, `8` on host platform. Each active connection uses approximately 500–1000 bytes of RAM.
+</ParamField>
+
+<ParamField path="listen_backlog" type="int">
+  Maximum pending connection queue depth (1–10). Defaults to `1` on ESP8266/RP2040, `4` on other platforms.
+</ParamField>
+
+<ParamField path="max_send_queue" type="int">
+  Maximum queued outgoing messages per connection before the client is disconnected (1–64). Prevents memory exhaustion from slow/stalled clients. Defaults to `5` on ESP8266/RP2040, `8` on ESP32, `16` on host.
+</ParamField>
+
+<ParamField path="actions" type="list">
+  User-defined actions exposed as Home Assistant services (prefixed with `esphome.<node_name>_`). Each action may define `variables` to receive typed parameters from Home Assistant. Supported types: `bool`, `int`, `float`, `string`, and their array variants.
+</ParamField>
+
+<ParamField path="on_client_connected" type="Automation">
+  Triggered when a client connects. Provides `client_address` (string) and `client_info` (string) variables.
+</ParamField>
+
+<ParamField path="on_client_disconnected" type="Automation">
+  Triggered when a client disconnects. Same variables as `on_client_connected`.
+</ParamField>
+
+## Advanced Example
+
+```yaml
+api:
+  port: 6053
+  encryption:
+    key: "YOUR_BASE64_32BYTE_KEY_HERE"
+  reboot_timeout: 30min
+  batch_delay: 50ms
+  max_connections: 6
+
+  on_client_connected:
+    - logger.log:
+        format: "Client %s connected from %s"
+        args: ["client_info.c_str()", "client_address.c_str()"]
+
+  on_client_disconnected:
+    - logger.log: "A client disconnected from the API"
+```
+
+## User-Defined Actions
+
+Actions are callable from Home Assistant automations and scripts. They appear automatically after flashing.
+
+```yaml
+api:
+  actions:
+    - action: activate_scene
+      variables:
+        scene_name: string
+        brightness: int
+      then:
+        - light.turn_on:
+            id: main_light
+            brightness: !lambda 'return brightness / 100.0;'
+            effect: !lambda 'return scene_name;'
+```
+
+Call from Home Assistant:
+
+```yaml
+action: esphome.livingroom_activate_scene
+data:
+  scene_name: "Rainbow"
+  brightness: 80
+```
+
+## Action Response Handling
+
+Actions can return data back to the calling client (ESPHome 2025.10.0+).
+
+```yaml
+api:
+  actions:
+    - action: get_sensor_data
+      supports_response: only
+      then:
+        - api.respond:
+            data: !lambda |-
+              root["temperature"] = id(temp_sensor).state;
+              root["humidity"] = id(hum_sensor).state;
+              root["uptime_s"] = millis() / 1000;
+```
+
+## Calling Home Assistant Actions
+
+```yaml
+on_button_press:
+  - homeassistant.action:
+      action: notify.mobile_app_myphone
+      data:
+        message: "Doorbell pressed!"
+      on_success:
+        - logger.log: "Notification sent"
+      on_error:
+        - logger.log: "Notification failed"
+```
+
+## Firing Home Assistant Events
+
+```yaml
+on_button_press:
+  - homeassistant.event:
+      event: esphome.doorbell_pressed
+      data:
+        location: "front_door"
+```
+
+## `api.connected` Condition
+
+```yaml
+on_boot:
+  - wait_until:
+      condition:
+        api.connected:
+          state_subscription_only: true  # Wait for HA, not just any client
+  - homeassistant.event:
+      event: esphome.device_online
+```
+
+<Note>
+  Set `state_subscription_only: true` in `api.connected` to differentiate between Home Assistant connections (which subscribe to state updates) and logger-only connections from the ESPHome CLI (`esphome logs`). Using the default `false` may trigger your automation prematurely.
+</Note>
+
+<Tip>
+  Setting `batch_delay: 0ms` enables immediate sending for state updates. Use this for IR remote sensors or other applications where rapid ON→OFF transitions must not be merged. Avoid it for sensors with frequent updates as it increases Wi-Fi traffic.
+</Tip>
+
+<Warning>
+  `max_connections` is a compile-time constant. The slots are statically allocated whether or not they are in use. On ESP8266 devices with limited RAM (~40 KB free after boot), setting this too high will cause out-of-memory crashes.
+</Warning>
+
+## Advantages Over MQTT
+
+| Feature | Native API | MQTT |
+|---|---|---|
+| Message encoding | Protocol buffers (~10× smaller) | Plain text or JSON |
+| Setup in Home Assistant | One-click auto-discovery | Manual broker + config |
+| Single point of failure | None — each device is its own server | Broker required |
+| Latency | Typically < 5 ms | Varies, broker-dependent |
+| TLS encryption | Built-in noise protocol | Optional, broker-dependent |

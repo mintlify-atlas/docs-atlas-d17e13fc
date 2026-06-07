@@ -1,0 +1,266 @@
+---
+title: "Using External Components in ESPHome"
+sidebarTitle: "External Components"
+description: "Load community and custom ESPHome components from GitHub or local directories using the external_components configuration block."
+---
+
+ESPHome's `external_components` feature lets you pull in components that are not part of the standard ESPHome release — whether they live on GitHub, in a local folder on your machine, or in a forked copy of ESPHome itself. You can also use `external_components` to **override** a built-in component with a patched version without touching the main ESPHome installation.
+
+<Note>
+  If you want to create your own components for ESPHome, see the [ESPHome Developer Site](https://developers.esphome.io) for guides on writing Python schema validators and C++ component code.
+</Note>
+
+---
+
+## Quick Start Examples
+
+```yaml
+external_components:
+  # Pull rtttl and dfplayer from ESPHome's dev branch on GitHub
+  - source:
+      type: git
+      url: https://github.com/esphome/esphome
+      ref: dev
+    components: [rtttl, dfplayer]
+
+  # Equivalent GitHub shorthand
+  - source: github://esphome/esphome@dev
+    components: [rtttl]
+
+  # Load a component from a GitHub pull request on the main ESPHome repo
+  - source: github://pr#2639
+    components: [rtttl]
+
+  # Load all components from a local folder (relative to the YAML file)
+  - source:
+      type: local
+      path: my_components
+
+  # Load a component from a local git repository branch
+  - source:
+      type: git
+      url: file:///Users/user/path_to_repo
+      ref: my_awesome_branch
+    components: [my_awesome_component]
+```
+
+---
+
+## Configuration Variables
+
+<ParamField path="source" type="object" required>
+  The location of the components. Accepts either a `local` or `git` source type, or a GitHub/PR shorthand string.
+
+  **`type`** (required): `local` or `git`
+</ParamField>
+
+<ParamField path="source.url" type="string">
+  *(git sources only)* Repository URL. May use `http://`, `https://`, or `file://` (absolute path) schemes.
+</ParamField>
+
+<ParamField path="source.ref" type="string">
+  *(git sources only)* Git branch or tag to check out. If not specified, the default branch is used.
+</ParamField>
+
+<ParamField path="source.username" type="string">
+  *(git sources only)* Username for authenticated git servers. Combine with `!secret` to keep credentials out of your YAML.
+</ParamField>
+
+<ParamField path="source.password" type="string">
+  *(git sources only)* Password for authenticated git servers.
+</ParamField>
+
+<ParamField path="source.path" type="string">
+  **Local sources:** path to the folder containing components.  
+  **Git sources (optional):** sub-directory inside the repo where components live, if it is not the standard `components/` or `esphome/components/` folder.
+</ParamField>
+
+<ParamField path="components" type="list">
+  The list of component names to load from this source. If omitted, **all** components found in the source are loaded.
+</ParamField>
+
+<ParamField path="refresh" type="time">
+  How often ESPHome checks the git repository for updates. Has no effect on `local` sources. Set to `0s` to check on every validation. Set to `never` to freeze at the current commit (recommended when `ref` points to a tag). Defaults to `1day`.
+</ParamField>
+
+---
+
+## Local Sources
+
+Local components are the simplest option — point ESPHome at a folder and it loads components from there. Relative paths are resolved from the directory containing your YAML file.
+
+```yaml
+external_components:
+  - source:
+      type: local
+      path: my_components
+
+  # Shorthand (equivalent to the above)
+  - source: my_components
+```
+
+### Required Folder Structure
+
+```
+<CONFIG_DIR>/
+├── my_device.yaml
+└── my_components/
+    ├── my_sensor/
+    │   ├── __init__.py
+    │   ├── my_sensor.cpp
+    │   ├── my_sensor.h
+    │   └── sensor.py
+    └── my_switch/
+        ├── __init__.py
+        ├── my_switch.cpp
+        ├── my_switch.h
+        └── switch.py
+```
+
+Each sub-folder inside `my_components/` becomes one loadable component. ESPHome does not check the path further — the folder name is the component name.
+
+<Tip>
+  Local components are ideal while developing or debugging a component, because changes take effect immediately on the next `esphome compile` without waiting for a git push or cache refresh.
+</Tip>
+
+---
+
+## GitHub Sources
+
+Git-based components are cloned into a cache directory inside `.esphome/` the first time they are used. Subsequent builds reuse the cached copy and only pull updates after the `refresh:` interval has elapsed.
+
+### Standard GitHub Repository
+
+```yaml
+external_components:
+  - source:
+      type: git
+      url: https://github.com/my-org/my-esphome-components
+      ref: v1.2.0          # pin to a release tag
+    components: [my_sensor, my_switch]
+```
+
+### GitHub Shorthand
+
+```yaml
+external_components:
+  # github://<user>/<repo>[@<branch-or-tag>]
+  - source: github://my-org/my-esphome-components@main
+    components: [my_sensor]
+```
+
+### Pull Request Shorthand
+
+Test a not-yet-merged ESPHome pull request:
+
+```yaml
+external_components:
+  # github://pr#<number>  (targets the main ESPHome repository)
+  - source: github://pr#2639
+    components: [rtttl]
+```
+
+### Forked ESPHome Repository
+
+If the component lives inside a fork of ESPHome (under `esphome/components/`), use the full git source. ESPHome automatically looks in both `components/` and `esphome/components/` inside the repo:
+
+```yaml
+external_components:
+  - source:
+      type: git
+      url: https://github.com/my-org/esphome
+      ref: feature/my-new-sensor
+    components: [my_new_sensor]
+```
+
+### Local Git Repository
+
+Useful for testing changes to a locally cloned repo before pushing upstream:
+
+```yaml
+external_components:
+  - source:
+      type: git
+      url: file:///home/user/projects/my-esphome-fork
+      ref: feature-branch
+    components: [my_component]
+```
+
+---
+
+## Pinning and Caching Behavior
+
+ESPHome caches each `(url, ref)` pair separately under `.esphome/`. Two entries pointing to the same URL but different `ref` values are treated as independent repositories and updated independently.
+
+<CodeGroup>
+  ```yaml Pin to a tag (never auto-update)
+  external_components:
+    - source: github://my-org/my-components@v2.0.1
+      refresh: never        # freeze — never pull updates
+      components: [my_sensor]
+  ```
+
+  ```yaml Track main branch (check daily)
+  external_components:
+    - source: github://my-org/my-components@main
+      refresh: 1day         # default — pull after 1 day
+      components: [my_sensor]
+  ```
+
+  ```yaml Always check for updates
+  external_components:
+    - source: github://my-org/my-components@main
+      refresh: 0s           # check on every validation
+      components: [my_sensor]
+  ```
+</CodeGroup>
+
+<Warning>
+  Avoid `refresh: 0s` when using the ESPHome dashboard or VS Code extension, as configuration is validated continuously and this will cause excessive git pull traffic.
+</Warning>
+
+---
+
+## Overriding Built-in Components
+
+`external_components` can replace a bundled ESPHome component entirely. This is useful for applying a patch without waiting for an official release:
+
+```yaml
+external_components:
+  - source:
+      type: git
+      url: https://github.com/my-org/esphome
+      ref: fix/sensor-bug
+    components: [sensor]   # replaces the built-in sensor component
+```
+
+<Warning>
+  Overriding built-in components can cause subtle incompatibilities with other components that depend on them. Always pin overrides to a specific commit or tag and test thoroughly before deploying to production devices.
+</Warning>
+
+---
+
+## Authenticated Repositories
+
+For private repositories, supply credentials using `!secret` to avoid storing them in plain text:
+
+```yaml
+external_components:
+  - source:
+      type: git
+      url: https://github.com/my-org/private-components
+      ref: main
+      username: !secret github_username
+      password: !secret github_token
+    components: [proprietary_sensor]
+```
+
+<Note>
+  Credentials are stored in clear text inside the `.esphome/` cache directory as part of the cloned repository URL. Do not commit the `.esphome/` directory to version control.
+</Note>
+
+---
+
+## API Stability
+
+There is no formal stability guarantee for the ESPHome component API. Internal APIs and the Python schema validation interface may change between ESPHome releases, which can break external components. When distributing a component for community use, document which ESPHome versions it has been tested against and encourage users to pin to compatible versions using `refresh: never` and a specific git tag.

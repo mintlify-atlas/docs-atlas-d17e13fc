@@ -1,0 +1,347 @@
+---
+title: "ESPNow: Peer-to-Peer Wireless for ESP Devices"
+sidebarTitle: "ESPNow"
+description: "Use ESP-NOW protocol for low-latency, connectionless peer-to-peer communication between ESP32 and ESP8266 devices in ESPHome."
+---
+
+The `espnow` component brings Espressif's [ESP-NOW protocol](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/network/esp_now.html) to ESPHome, enabling direct device-to-device communication without Wi-Fi association or a router. ESP-NOW is a connectionless protocol: devices exchange short data packets with very low latency, and a sender doesn't need to maintain a persistent link with the receiver. This makes it ideal for battery-powered sensor nodes, wireless buttons, remote actuators, and any scenario where standard Wi-Fi overhead is undesirable.
+
+<Note>
+  The `espnow` component currently targets **ESP32** devices. It can be used alongside the Packet Transport Component to broadcast sensor data using the ESP-NOW Packet Transport Platform.
+</Note>
+
+## How ESP-NOW Works
+
+ESP-NOW operates at the MAC layer, bypassing the TCP/IP stack entirely. Each frame carries up to **250 bytes** of payload and is transmitted on a single Wi-Fi channel. Because there is no handshake or association required, messages are delivered in milliseconds — typically faster than any Wi-Fi-based communication path.
+
+<CardGroup cols={2}>
+  <Card title="No Router Required" icon="router">
+    Devices communicate directly over the air. No Wi-Fi network or internet connection is needed for ESP-NOW messages to flow.
+  </Card>
+  <Card title="Low Latency" icon="bolt">
+    No TCP/IP stack, no association handshake. Packets are sent and received at the MAC layer in milliseconds.
+  </Card>
+  <Card title="Works Alongside Wi-Fi" icon="wifi">
+    ESP-NOW and Wi-Fi can coexist on the same device, using the same radio. Both must operate on the same Wi-Fi channel.
+  </Card>
+  <Card title="Up to 20 Peers" icon="network-wired">
+    ESP-NOW supports up to 20 registered unicast peers per device. Broadcast messages reach all nearby ESP-NOW devices on the channel.
+  </Card>
+</CardGroup>
+
+## Minimal Configuration
+
+```yaml
+espnow:
+```
+
+With no additional options, the component starts on boot, enables broadcast reception, and requires peers to be manually registered before unicast messages can be sent.
+
+## Configuration Variables
+
+<ParamField path="channel" type="integer">
+  Wi-Fi channel (1–14, region-dependent) for ESP-NOW transmit and receive. **Cannot be set when the `wifi:` component is in use** — in that case, ESP-NOW automatically uses the same channel as the Wi-Fi network. When operating without Wi-Fi, set a fixed channel so all devices in the network share the same one.
+</ParamField>
+
+<ParamField path="auto_add_peer" type="boolean">
+  When `true`, any device that sends a packet to this node is automatically added to the peer list, allowing future unicast replies. When `false` (default), only explicitly registered peers can receive unicast messages. Defaults to `false`.
+</ParamField>
+
+<ParamField path="enable_on_boot" type="boolean">
+  Start the ESP-NOW radio on device boot. Set to `false` to defer initialization and enable it manually via automation. Defaults to `true`.
+</ParamField>
+
+<ParamField path="peers" type="list">
+  Static list of MAC addresses for known devices. Each entry is a MAC address string (e.g., `11:22:33:44:55:66`). Peers in this list can receive unicast messages immediately without `auto_add_peer` or the `espnow.peer.add` action.
+</ParamField>
+
+<ParamField path="on_receive" type="Automation">
+  Automation triggered when a data packet is received **from a registered peer**.
+
+  Optional sub-parameter:
+  - **address** (*Optional*, MAC Address): Filter to packets from a specific source MAC.
+</ParamField>
+
+<ParamField path="on_unknown_peer" type="Automation">
+  Automation triggered when a packet arrives from a device **not** in the peer list. Use this to inspect the sender and conditionally call `espnow.peer.add` to register it.
+</ParamField>
+
+<ParamField path="on_broadcast" type="Automation">
+  Automation triggered when a **broadcast** packet is received (sent to `FF:FF:FF:FF:FF:FF`).
+
+  Optional sub-parameter:
+  - **address** (*Optional*, MAC Address): Filter to broadcasts from a specific source MAC.
+</ParamField>
+
+## Automation Variables
+
+All three receive automations (`on_receive`, `on_unknown_peer`, `on_broadcast`) provide:
+
+| Variable | Type | Description |
+|---|---|---|
+| `info` | `espnow::ESPNowRecvInfo` | Metadata about the packet (source MAC, destination MAC, RSSI, channel) |
+| `data` | `const uint8_t*` | Pointer to raw packet payload bytes |
+| `size` | `size_t` | Number of bytes in the payload |
+
+<Warning>
+  The `info`, `data`, and `size` variables are only valid for the **synchronous duration** of the automation. Do not use them after a `delay:` action or any asynchronous step — the memory will have been freed.
+</Warning>
+
+```yaml
+espnow:
+  on_receive:
+    - lambda: |-
+        char des_mac[MAC_ADDRESS_PRETTY_BUFFER_SIZE];
+        char src_mac[MAC_ADDRESS_PRETTY_BUFFER_SIZE];
+        char hex[256];
+        ESP_LOGD("espnow", "From %s to %s: %s  RSSI: %d dBm",
+                 format_mac_addr_upper(info.src_addr, src_mac),
+                 format_mac_addr_upper(info.des_addr, des_mac),
+                 format_hex_pretty_to(hex, data, size),
+                 info.rx_ctrl->rssi);
+```
+
+## Actions
+
+### `espnow.send` Action
+
+Send a unicast data packet to a specific peer.
+
+```yaml
+on_...:
+  # Send a string
+  - espnow.send:
+      address: 11:22:33:44:55:66
+      data: "Hello from ESPHome"
+
+  # Send raw bytes (hex list)
+  - espnow.send:
+      address: 11:22:33:44:55:66
+      data: [0x01, 0x02, 0x03]
+
+  # Templatable address and data
+  - espnow.send:
+      address: !lambda "return {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};"
+      data: !lambda "return {0x00, 0xAB};"
+```
+
+<ParamField path="address" type="MAC Address" required>
+  MAC address of the destination device. Supports [templates](/reference/lambda-templates).
+</ParamField>
+
+<ParamField path="data" type="string or list of bytes" required>
+  Payload to send. Can be a plain string, a hex byte list, or a lambda returning `std::vector<uint8_t>`. Supports [templates](/reference/lambda-templates). Maximum **250 bytes**.
+</ParamField>
+
+<ParamField path="wait_for_sent" type="boolean">
+  Block the automation until the send operation completes and `on_sent` or `on_error` finishes. Defaults to `true`.
+</ParamField>
+
+<ParamField path="continue_on_error" type="boolean">
+  If `false`, the automation stops if the packet could not be sent. Defaults to `true`.
+</ParamField>
+
+<ParamField path="on_sent" type="Automation">
+  Triggered when the packet is sent successfully.
+</ParamField>
+
+<ParamField path="on_error" type="Automation">
+  Triggered when the packet could not be sent (e.g., peer unreachable).
+</ParamField>
+
+---
+
+### `espnow.broadcast` Action
+
+Send a packet to **all** ESP-NOW devices on the current channel (`FF:FF:FF:FF:FF:FF`). No peer registration required.
+
+```yaml
+on_...:
+  - espnow.broadcast:
+      data: "announce"
+
+  - espnow.broadcast:
+      data: [0xDE, 0xAD, 0xBE, 0xEF]
+```
+
+<ParamField path="data" type="string or list of bytes" required>
+  Payload to broadcast. Same constraints as `espnow.send` — maximum 250 bytes.
+</ParamField>
+
+<Warning>
+  Broadcast reaches **all** devices on the channel using ESP-NOW — including devices not managed by you. Minimize broadcast usage; prefer unicast for normal data exchange and use broadcasts only for initial discovery.
+</Warning>
+
+---
+
+### `espnow.peer.add` Action
+
+Dynamically register a new device as a peer at runtime.
+
+```yaml
+on_...:
+  - espnow.peer.add:
+      address: 11:22:33:44:55:66
+```
+
+<ParamField path="address" type="MAC Address" required>
+  MAC address of the device to add. Supports [templates](/reference/lambda-templates).
+</ParamField>
+
+---
+
+### `espnow.peer.delete` Action
+
+Remove a previously registered peer.
+
+```yaml
+on_...:
+  - espnow.peer.delete:
+      address: 11:22:33:44:55:66
+```
+
+<ParamField path="address" type="MAC Address" required>
+  MAC address of the peer to remove. Supports [templates](/reference/lambda-templates).
+</ParamField>
+
+---
+
+### `espnow.set_channel` Action
+
+Change the Wi-Fi channel ESP-NOW operates on at runtime. Only valid when the `wifi:` component is **not** active.
+
+```yaml
+on_...:
+  - espnow.set_channel:
+      channel: 6
+
+  # Short form
+  - espnow.set_channel: 6
+```
+
+<ParamField path="channel" type="integer" required>
+  Channel number between `0` and `14`. Legal channels vary by country (1–11 in the US, 1–13 in most of Europe). `0` lets ESP-NOW choose automatically (typically channel 1). See [Wi-Fi channel regulations](https://en.wikipedia.org/wiki/List_of_WLAN_channels) for your region.
+</ParamField>
+
+## Peers
+
+A **peer** is a device registered as an allowed unicast destination. Broadcast and unencrypted unicast reception from unregistered devices still works, but you cannot send unicast packets to an unregistered address.
+
+| Scenario | Behavior |
+|---|---|
+| `auto_add_peer: false`, no peers configured | Only broadcasts can be sent; unicast sends fail |
+| `auto_add_peer: true` | Any device that sends to you is auto-registered; any device you send to is auto-registered |
+| Static `peers:` list | Named peers are pre-registered at boot |
+| `espnow.peer.add` action | Register peers dynamically from automations |
+
+## Limitations
+
+<CardGroup cols={2}>
+  <Card title="250-Byte Payload" icon="file-text">
+    Each ESP-NOW frame carries a maximum of **250 bytes** of application data. Larger messages must be split and reassembled at the application layer.
+  </Card>
+  <Card title="No Built-in Encryption" icon="lock-open">
+    Basic ESP-NOW is unencrypted. For sensitive data, encrypt payloads in your lambda before sending, or use the Packet Transport component which adds its own framing.
+  </Card>
+  <Card title="Shared Channel with Wi-Fi" icon="wifi">
+    When `wifi:` is active, ESP-NOW shares the same channel. You cannot set a different channel, and Wi-Fi congestion can affect ESP-NOW delivery.
+  </Card>
+  <Card title="MAC Address Required" icon="address-card">
+    You must know the MAC address of each peer. Use `auto_add_peer: true` or an initial broadcast exchange to discover peers dynamically.
+  </Card>
+</CardGroup>
+
+## Two-Device Example
+
+This example shows a **sender** (a battery-powered button node) and a **receiver** (a mains-powered relay node). The sender broadcasts a packet when a button is pressed; the receiver listens and toggles a relay.
+
+### Sender (Button Node)
+
+```yaml
+substitutions:
+  name: espnow-sender
+  receiver_mac: "AA:BB:CC:DD:EE:FF"  # MAC of the receiver
+
+esphome:
+  name: ${name}
+
+esp32:
+  variant: esp32c3
+  framework:
+    type: esp-idf
+
+# No wifi: block — standalone ESP-NOW
+espnow:
+  channel: 6
+  peers:
+    - ${receiver_mac}
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO9
+      mode: INPUT_PULLUP
+      inverted: true
+    name: "Button"
+    on_press:
+      - espnow.send:
+          address: ${receiver_mac}
+          data: [0x01]   # 0x01 = toggle command
+          on_sent:
+            - logger.log: "Toggle command sent!"
+          on_error:
+            - logger.log: "Send failed"
+```
+
+### Receiver (Relay Node)
+
+```yaml
+substitutions:
+  name: espnow-receiver
+  sender_mac: "11:22:33:44:55:66"   # MAC of the sender
+
+esphome:
+  name: ${name}
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+
+ota:
+  platform: esphome
+
+# ESP-NOW uses the same channel as Wi-Fi automatically
+espnow:
+  peers:
+    - ${sender_mac}
+  on_receive:
+    - address: ${sender_mac}
+      then:
+        - lambda: |-
+            if (size == 1 && data[0] == 0x01) {
+              id(relay_switch).toggle();
+            }
+
+switch:
+  - platform: gpio
+    pin: GPIO5
+    name: "Relay"
+    id: relay_switch
+```
+
+<Tip>
+  Find a device's MAC address by enabling logging and watching the boot output — ESPHome prints the MAC address during startup. Alternatively, use `ESP_LOGD("espnow", "%s", WiFi.macAddress().c_str());` in a lambda.
+</Tip>
+
+## See Also
+
+- ESP-NOW Packet Transport Platform
+- Packet Transport Component
+- [Espressif ESP-NOW Documentation](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/network/esp_now.html)

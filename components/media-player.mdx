@@ -1,0 +1,311 @@
+---
+title: "Media Player Component for ESPHome Audio Devices"
+sidebarTitle: "Media Player"
+description: "Turn ESP32 into a media player with ESPHome: I2S audio output, volume control, play/pause, and Home Assistant media player integration."
+---
+
+ESPHome's `media_player` domain transforms ESP32 devices into fully functional Home Assistant media player entities. Using an I2S DAC (like the MAX98357A or PCM5102) or a compatible audio output peripheral, your ESP32 can stream audio from URLs, receive TTS announcements, maintain a play queue, and respond to media controls — all with native Home Assistant integration.
+
+<Note>
+  ESPHome media players require Home Assistant 2022.6 or newer.
+</Note>
+
+## Minimal Example
+
+```yaml
+i2s_audio:
+  i2s_lrclk_pin: GPIO25
+  i2s_bclk_pin: GPIO26
+
+media_player:
+  - platform: i2s_audio
+    name: "Living Room Speaker"
+    dac_type: external
+    i2s_dout_pin: GPIO22
+    mode: mono
+```
+
+## Base Media Player Configuration
+
+<ParamField path="id" type="string" optional>
+  Manually specify the ID for code generation. At least one of `id` and `name` must be specified.
+</ParamField>
+
+<ParamField path="name" type="string" optional>
+  The name of the media player in Home Assistant. Set to `None` to inherit the device's `friendly_name`.
+</ParamField>
+
+<ParamField path="icon" type="icon" optional>
+  Manually override the MDI icon shown in the frontend.
+</ParamField>
+
+<ParamField path="internal" type="boolean" optional>
+  If `true`, the media player is not exposed to the frontend. Defaults to `false`.
+</ParamField>
+
+<ParamField path="disabled_by_default" type="boolean" optional>
+  If `true`, the entity is hidden in Home Assistant until manually enabled. Defaults to `false`.
+</ParamField>
+
+<ParamField path="entity_category" type="string" optional>
+  The entity category (`config`, `diagnostic`). Set to `""` to remove the default.
+</ParamField>
+
+---
+
+## Media Player Actions
+
+All actions work with a single media player without specifying an `id`. When multiple players are defined, provide `id:` explicitly.
+
+<Note>
+  Not all actions are supported by every media player platform. Availability depends on the specific platform implementation.
+</Note>
+
+### `media_player.play_media`
+
+Start playing audio from a URL.
+
+```yaml
+on_...:
+  # Simple shorthand
+  - media_player.play_media: 'http://media-server/audio.mp3'
+
+  # Full form
+  - media_player.play_media:
+      id: my_player
+      media_url: 'http://media-server/audio.mp3'
+
+  # Lambda
+  - media_player.play_media: !lambda 'return "http://media-server/audio.mp3";'
+```
+
+### `media_player.enqueue`
+
+Add media to the player's queue without interrupting current playback.
+
+```yaml
+on_...:
+  - media_player.enqueue: 'http://media-server/track2.mp3'
+```
+
+### `media_player.play` / `media_player.pause` / `media_player.stop`
+
+```yaml
+on_...:
+  - media_player.play:
+  - media_player.pause:
+  - media_player.stop:
+```
+
+### `media_player.toggle`
+
+Toggle between play and pause.
+
+```yaml
+on_...:
+  - media_player.toggle:
+```
+
+### `media_player.volume_set`
+
+```yaml
+on_...:
+  - media_player.volume_set: 50%
+  # or
+  - media_player.volume_set:
+      id: my_player
+      volume: 75%
+  # Lambda
+  - media_player.volume_set: !lambda "return 0.5;"
+```
+
+### `media_player.volume_up` / `media_player.volume_down`
+
+```yaml
+on_...:
+  - media_player.volume_up:
+  - media_player.volume_down:
+```
+
+### `media_player.mute` / `media_player.unmute`
+
+```yaml
+on_...:
+  - media_player.mute:
+  - media_player.unmute:
+```
+
+### Queue Management
+
+```yaml
+on_...:
+  - media_player.next:           # skip to next track
+  - media_player.previous:       # go to previous track
+  - media_player.clear_playlist: # clear the queue
+```
+
+### Repeat and Shuffle
+
+```yaml
+on_...:
+  - media_player.repeat_off:    # no repeat
+  - media_player.repeat_one:    # repeat current track
+  - media_player.repeat_all:    # repeat all tracks
+  - media_player.shuffle:       # enable shuffle
+  - media_player.unshuffle:     # disable shuffle
+```
+
+### Power Control
+
+```yaml
+on_...:
+  - media_player.turn_on:
+  - media_player.turn_off:
+```
+
+---
+
+## Media Player Triggers
+
+```yaml
+media_player:
+  - platform: i2s_audio
+    name: "Speaker"
+    on_state:
+      - logger.log: "Player state changed"
+    on_play:
+      - logger.log: "Playback started"
+    on_pause:
+      - logger.log: "Playback paused"
+    on_idle:
+      - logger.log: "Playback finished"
+    on_announcement:
+      - logger.log: "Announcement playing"
+    on_turn_on:
+      - logger.log: "Player turned on"
+    on_turn_off:
+      - logger.log: "Player turned off"
+```
+
+---
+
+## Media Player Conditions
+
+```yaml
+on_...:
+  if:
+    condition:
+      media_player.is_playing:
+    then:
+      - media_player.pause:
+
+  if:
+    condition:
+      media_player.is_idle:
+    then:
+      - logger.log: "Player is idle"
+
+  if:
+    condition:
+      media_player.is_paused:
+    then:
+      - media_player.play:
+```
+
+Other conditions: `media_player.is_announcing`, `media_player.is_muted`, `media_player.is_on`, `media_player.is_off`.
+
+---
+
+## Playing Media in Sequence
+
+Use `wait_until` with `media_player.is_idle` to chain audio files.
+
+```yaml
+on_...:
+  then:
+    - media_player.play_media: 'http://media-server/intro.mp3'
+    - wait_until:
+        media_player.is_idle:
+    - media_player.play_media: 'http://media-server/main.mp3'
+    - wait_until:
+        media_player.is_idle:
+    - media_player.play_media: 'http://media-server/outro.mp3'
+```
+
+---
+
+## Announcement Mode
+
+The `announcement` parameter targets a separate audio pipeline (if supported by the platform), allowing TTS announcements to interrupt or overlay regular media.
+
+```yaml
+on_...:
+  - media_player.play_media:
+      media_url: 'http://tts-server/announcement.mp3'
+      announcement: true
+```
+
+---
+
+## Complete I2S Audio Example
+
+```yaml
+i2s_audio:
+  i2s_lrclk_pin: GPIO25
+  i2s_bclk_pin: GPIO26
+
+media_player:
+  - platform: i2s_audio
+    name: "Kitchen Speaker"
+    id: kitchen_speaker
+    dac_type: external
+    i2s_dout_pin: GPIO22
+    mode: mono
+    on_idle:
+      - logger.log: "Audio finished"
+
+# Physical volume control with rotary encoder
+sensor:
+  - platform: rotary_encoder
+    name: "Volume Knob"
+    pin_a: GPIO32
+    pin_b: GPIO33
+    on_value:
+      - if:
+          condition:
+            lambda: "return x > 0;"
+          then:
+            - media_player.volume_up:
+          else:
+            - media_player.volume_down:
+
+# Mute button
+binary_sensor:
+  - platform: gpio
+    pin: GPIO0
+    name: "Mute Button"
+    on_click:
+      - if:
+          condition:
+            media_player.is_muted:
+          then:
+            - media_player.unmute:
+          else:
+            - media_player.mute:
+```
+
+---
+
+## Voice Assistant Integration
+
+Media players integrate with `voice_assistant` for TTS response playback.
+
+```yaml
+voice_assistant:
+  microphone: i2s_mic
+  media_player: kitchen_speaker   # use media_player for TTS output
+```
+
+<Tip>
+  When using a media player for voice assistant TTS, you can receive streaming TTS URLs in the `on_intent_progress` trigger for low-latency response playback.
+</Tip>

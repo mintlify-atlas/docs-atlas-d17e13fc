@@ -1,0 +1,257 @@
+---
+title: "Web Server Component: Built-in HTTP Interface"
+sidebarTitle: "Web Server"
+description: "Enable a built-in HTTP web server on your ESPHome device to view sensor states, control switches, and access REST and SSE APIs from a browser."
+---
+
+The `web_server` component starts a lightweight HTTP server directly on your ESPHome device. Once enabled, you can open a browser to the device's IP address (or `<device-name>.local/`) and interact with every entity — view sensor readings, toggle switches, adjust numbers, and tail live logs — without needing Home Assistant or any external service. The same server also exposes a [REST API](/reference/web-api) and a [Server-Sent Events (SSE) stream](/reference/web-api) for programmatic access.
+
+<Warning>
+  Enabling `web_server` consumes a significant amount of RAM and flash. This can decrease stability, especially on **ESP8266** devices. On memory-constrained hardware, consider using the `local: false` default (CDN-hosted assets) and avoid combining it with other memory-intensive components.
+</Warning>
+
+## Minimal Configuration
+
+```yaml
+web_server:
+  port: 80
+```
+
+Navigate to `http://<device-ip>/` or `http://<device-name>.local/` in your browser to open the interface.
+
+## Configuration Variables
+
+<ParamField path="port" type="integer">
+  The TCP port the web server listens on. Defaults to `80`.
+</ParamField>
+
+<ParamField path="version" type="string">
+  UI version to serve. Options: `1`, `2`, or `3`.
+
+  - **Version 1** — Simple table layout.
+  - **Version 2** — Web components, richer functionality. Default.
+  - **Version 3** — Home Assistant-style theming with entity grouping and sorting.
+</ParamField>
+
+<ParamField path="auth" type="object">
+  Enables HTTP Digest authentication. When configured, the browser will prompt for credentials before showing the interface.
+
+  <ParamField path="auth.username" type="string" required>
+    Username for authentication.
+  </ParamField>
+
+  <ParamField path="auth.password" type="string" required>
+    Password for authentication.
+  </ParamField>
+</ParamField>
+
+<ParamField path="log" type="boolean">
+  Show the live log panel in the web interface. Set to `false` to hide it. Defaults to `true`.
+</ParamField>
+
+<ParamField path="ota" type="boolean">
+  Set to `false` to disable OTA firmware updates through the web interface. Only `false` is accepted here — to **enable** OTA via the web server, use the `web_server` OTA platform instead. Useful when `captive_portal:` is configured and you want OTA restricted to the captive portal context.
+</ParamField>
+
+<ParamField path="local" type="boolean">
+  When `true`, all CSS and JS assets are embedded in the firmware and served from flash instead of loaded from the CDN at `oi.esphome.io`. Enables fully offline operation. Defaults to `false`.
+</ParamField>
+
+<ParamField path="compression" type="string">
+  Compression algorithm for embedded assets when `local: true`. Options: `gzip` (default) or `br` (Brotli). Brotli produces ~10% smaller binaries, but some browsers only support Brotli over HTTPS. Use `gzip` for maximum compatibility since ESPHome devices serve over HTTP.
+</ParamField>
+
+<ParamField path="css_url" type="string">
+  URL for the CSS stylesheet. Defaults to the hosted stylesheet at `oi.esphome.io`. Set to `""` to load no external CSS (useful with `css_include`).
+</ParamField>
+
+<ParamField path="css_include" type="string">
+  Path to a local CSS file to embed. The file is served as `/0.css`. Useful for offline-capable AP mode deployments.
+</ParamField>
+
+<ParamField path="js_url" type="string">
+  URL for the JavaScript file. Defaults to the hosted script at `oi.esphome.io`. Set to `""` to load no external JS (useful with `js_include`).
+</ParamField>
+
+<ParamField path="js_include" type="string">
+  Path to a local JavaScript file to embed. The file is served as `/0.js`. Useful for offline-capable AP mode deployments.
+</ParamField>
+
+<ParamField path="include_internal" type="boolean">
+  Whether to display entities marked `internal: true` in the web interface. Defaults to `false`.
+</ParamField>
+
+<ParamField path="enable_private_network_access" type="boolean">
+  Enables support for the [Private Network Access](https://wicg.github.io/private-network-access) browser specification and its permission prompt. Defaults to `true`.
+</ParamField>
+
+<ParamField path="sorting_groups" type="list">
+  **Version 3 only.** Define named groups for organizing entities on the page.
+
+  <ParamField path="sorting_groups[].id" type="ID" required>
+    Unique identifier for the group, referenced by entities via `sorting_group_id`.
+  </ParamField>
+
+  <ParamField path="sorting_groups[].name" type="string" required>
+    Display name shown as the group header.
+  </ParamField>
+
+  <ParamField path="sorting_groups[].sorting_weight" type="float">
+    Groups with smaller weights appear first. Defaults to `50`.
+  </ParamField>
+</ParamField>
+
+<ParamField path="id" type="ID">
+  Manually specify the component ID for code generation.
+</ParamField>
+
+## Configuration Examples
+
+### Authentication (Recommended)
+
+Always protect the web interface with authentication to prevent unauthorized access on your local network.
+
+```yaml
+web_server:
+  port: 80
+  auth:
+    username: !secret web_server_username
+    password: !secret web_server_password
+```
+
+### Version 3 with Entity Grouping
+
+```yaml
+web_server:
+  version: 3
+  sorting_groups:
+    - id: group_climate
+      name: "Climate"
+      sorting_weight: 10
+    - id: group_power
+      name: "Power & Energy"
+      sorting_weight: 20
+
+sensor:
+  - platform: dht
+    temperature:
+      name: "Room Temperature"
+      web_server:
+        sorting_group_id: group_climate
+        sorting_weight: 1
+    humidity:
+      name: "Room Humidity"
+      web_server:
+        sorting_group_id: group_climate
+        sorting_weight: 2
+```
+
+### Fully Offline (Local Assets)
+
+Embeds all web assets in firmware — no internet access required on client devices:
+
+```yaml
+web_server:
+  local: true
+```
+
+### Disable OTA with Captive Portal
+
+When using `captive_portal:`, OTA is automatically available through the portal. Set `ota: false` to prevent OTA through the regular web interface:
+
+```yaml
+web_server:
+  port: 80
+  ota: false
+
+captive_portal:
+```
+
+### Version 1 with Fully Local Assets
+
+Serve version 1 UI entirely from local files with no CDN dependency:
+
+```yaml
+web_server:
+  port: 80
+  version: 1
+  css_include: "webserver-v1.min.css"
+  css_url: ""
+  js_include: "webserver-v1.min.js"
+  js_url: ""
+```
+
+## Web Server Versions
+
+<CardGroup cols={3}>
+  <Card title="Version 1" icon="table">
+    Simple table-based layout. Lowest memory footprint. Suitable for ESP8266 and resource-constrained devices.
+  </Card>
+  <Card title="Version 2" icon="browser">
+    Web component architecture with richer controls. Supports sliders, dropdowns, and input fields. **Default.**
+  </Card>
+  <Card title="Version 3" icon="layout-dashboard">
+    Home Assistant-inspired styling. Adds entity grouping, sorting weights, sensor history graphs, and full-screen expand controls.
+  </Card>
+</CardGroup>
+
+## Version 3 Features
+
+### Entity Sorting
+
+Assign a `sorting_weight` to any entity. Lower values appear first. Defaults to `50` when unset:
+
+```yaml
+sensor:
+  - platform: template
+    name: "Primary Sensor"
+    web_server:
+      sorting_weight: 1
+  - platform: template
+    name: "Secondary Sensor"
+    web_server:
+      sorting_weight: 2
+```
+
+### Number Slider
+
+Number entities render as sliders. Click and hold the displayed value to open a precise input popup where you can type an exact number and press Enter to confirm.
+
+### Expand Controls and Logs
+
+Double-click any group header to expand that group's controls to full-screen. Double-click the log header to expand the log panel to full-screen. Double-click again to collapse.
+
+### Sensor History Graph
+
+Click on any sensor card to expand an inline history graph showing recent values over time.
+
+## OTA Updates via the Web Interface
+
+To enable OTA updates through the web server (in addition to or instead of the native API):
+
+```yaml
+ota:
+  - platform: web_server
+```
+
+<Info>
+  The `captive_portal:` component automatically loads the `web_server` OTA platform. You do not need to configure it separately if you use `captive_portal`.
+</Info>
+
+## Security Considerations
+
+<Warning>
+  The web server exposes **full device control** to anyone who can reach the device's IP. Always enable `auth:` when using `web_server`, particularly on networks with untrusted clients.
+</Warning>
+
+- Use `!secret` values for `username` and `password` to keep credentials out of your YAML files.
+- Consider setting `ota: false` and managing OTA exclusively through the Home Assistant ESPHome add-on if you don't need browser-based updates.
+- The `enable_private_network_access` flag (on by default) helps browsers enforce the Private Network Access specification, adding an extra layer of origin checks when accessing the device from web pages.
+
+## See Also
+
+- [REST API Reference](/reference/web-api)
+- [Server-Sent Events API](/reference/web-api)
+- [Web Server OTA Platform](/components/ota)
+- Prometheus Component
+- Captive Portal Component

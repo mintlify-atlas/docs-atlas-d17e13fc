@@ -1,0 +1,208 @@
+---
+title: "Automate a Garage Door with ESPHome"
+sidebarTitle: "Garage Door"
+description: "Build a smart garage door controller with ESPHome using a relay output, magnetic door sensor, and the Cover component for Home Assistant control."
+---
+
+Turning a standard garage door into a smart one rarely requires replacing the opener — most units already have dry-contact inputs for the wall button. This recipe wires a small ESP board to two relay channels (one to trigger "open", one to trigger "close") and a magnetic reed switch to detect whether the door is actually up or down. The result is a native Home Assistant **Cover** entity with open, close, and stop actions that reflects real door state.
+
+<Warning>
+  Garage doors are heavy moving machinery. A misconfigured automation could
+  open or close the door unexpectedly. Always test with the door in a safe
+  position and ensure people and pets cannot be trapped or struck. Never
+  bypass the opener's built-in safety sensors. Local regulations may also
+  require a hardwired wall control to remain functional regardless of smart
+  home state.
+</Warning>
+
+## Hardware needed
+
+| Component | Notes |
+|---|---|
+| ESP8266 or ESP32 board | D1 Mini, NodeMCU, or similar |
+| Dual-channel relay module | 5 V coil, normally-open contacts |
+| Magnetic reed switch | Any NO or NC reed switch rated for 3.3 V GPIO |
+| Jumper wires | For relay signal lines and reed switch |
+| 12 V → 5 V buck converter (optional) | Power from the opener's 12 V supply |
+
+## Wiring overview
+
+```
+Garage door opener wall-button terminals
+  OPEN terminal  ──── Relay 1 NO contact ──── Relay 1 COM
+  CLOSE terminal ──── Relay 2 NO contact ──── Relay 2 COM
+
+ESP board
+  GPIO_RELAY_OPEN  ──── Relay 1 IN
+  GPIO_RELAY_CLOSE ──── Relay 2 IN
+  GPIO_SENSOR      ──── Reed switch ──── GND
+                        (Reed switch other leg pulled HIGH via internal pull-up)
+```
+
+<Note>
+  Many garage-door openers use a single button terminal that toggles state
+  rather than separate open/close terminals. If your opener works that way,
+  use the single-relay variant shown in the alternative YAML below.
+</Note>
+
+## Complete YAML configuration
+
+### Two-relay (separate open and close) variant
+
+This is the most common pattern for commercial openers with discrete open/close inputs.
+
+```yaml
+esphome:
+  name: garage-door
+  friendly_name: Garage Door
+
+esp8266:
+  board: d1_mini   # adjust to your board
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+logger:
+ota:
+  platform: esphome
+
+# ── Door position sensor ──────────────────────────────────────────────────────
+# Reed switch closes when the door is fully open.
+# Adjust device_class and invert logic to match your switch's orientation.
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO14   # adjust to your wiring
+      mode:
+        input: true
+        pullup: true
+      inverted: true   # true = switch closes on door-open (NO reed switch)
+    name: "Garage Door Position"
+    id: door_sensor
+    device_class: garage_door
+    filters:
+      - delayed_on: 50ms    # debounce
+      - delayed_off: 50ms
+
+# ── Relay outputs ─────────────────────────────────────────────────────────────
+switch:
+  - platform: gpio
+    pin: GPIO12          # adjust to your wiring
+    name: "Garage Door Open Switch"
+    id: open_switch
+    restore_mode: ALWAYS_OFF
+
+  - platform: gpio
+    pin: GPIO13          # adjust to your wiring
+    name: "Garage Door Close Switch"
+    id: close_switch
+    restore_mode: ALWAYS_OFF
+
+# ── Cover entity ──────────────────────────────────────────────────────────────
+cover:
+  - platform: template
+    name: "Garage Door"
+    device_class: garage
+    # Report actual position from the reed switch when available
+    lambda: |-
+      if (id(door_sensor).state) {
+        return COVER_OPEN;
+      } else {
+        return COVER_CLOSED;
+      }
+    open_action:
+      - switch.turn_off: close_switch   # safety: cancel any active close
+      - switch.turn_on: open_switch
+      - delay: 150ms                    # hold relay long enough to register
+      - switch.turn_off: open_switch
+    close_action:
+      - switch.turn_off: open_switch    # safety: cancel any active open
+      - switch.turn_on: close_switch
+      - delay: 150ms
+      - switch.turn_off: close_switch
+    stop_action:
+      - switch.turn_off: open_switch
+      - switch.turn_off: close_switch
+```
+
+### Single-relay (toggle button) variant
+
+If your opener has only one wall-button terminal that toggles the door each time it is momentarily closed, simplify to a single switch:
+
+```yaml
+switch:
+  - platform: gpio
+    pin: GPIO12
+    name: "Garage Door Toggle Switch"
+    id: toggle_switch
+    restore_mode: ALWAYS_OFF
+
+cover:
+  - platform: template
+    name: "Garage Door"
+    device_class: garage
+    optimistic: true
+    assumed_state: true   # no position feedback in this variant
+    open_action:
+      - switch.turn_on: toggle_switch
+      - delay: 150ms
+      - switch.turn_off: toggle_switch
+    close_action:
+      - switch.turn_on: toggle_switch
+      - delay: 150ms
+      - switch.turn_off: toggle_switch
+    stop_action:
+      - switch.turn_on: toggle_switch
+      - delay: 150ms
+      - switch.turn_off: toggle_switch
+```
+
+<Note>
+  The toggle variant uses `assumed_state: true` because there is no position
+  sensor. Home Assistant will show the door as "open" or "closed" based purely
+  on which command was last sent — not on what the door is physically doing.
+  Adding a reed switch (as in the two-relay variant) removes this limitation.
+</Note>
+
+## Configuration walk-through
+
+<Steps>
+  <Step title="Binary sensor — reed switch">
+    The reed switch reports physical door state. `pullup: true` uses the ESP's
+    internal pull-up resistor so no external resistor is needed. `inverted: true`
+    flips the logic if your switch is normally-open (reads LOW when the magnet
+    is present). The 50 ms `delayed_on` / `delayed_off` filters eliminate
+    contact bounce so Home Assistant does not see rapid open/close flickers.
+  </Step>
+  <Step title="Relay switches">
+    Each relay is a plain `gpio` switch. `restore_mode: ALWAYS_OFF` ensures
+    relays start de-energised after a reboot — important for safety. The
+    switches are exposed to HA but are primarily controlled by the cover
+    actions rather than directly.
+  </Step>
+  <Step title="Template cover lambda">
+    The `lambda` block maps reed switch state to `COVER_OPEN` /
+    `COVER_CLOSED` so Home Assistant always reflects the real physical
+    position. If the door is mid-travel (neither fully open nor closed), the
+    lambda returns no value and HA shows the door as "opening" or "closing"
+    based on the last command.
+  </Step>
+  <Step title="Open and close actions">
+    Each action first cancels the opposite relay (belt-and-suspenders safety),
+    then pulses its own relay for 150 ms. This mimics pressing a wall button.
+    Adjust the delay if your opener requires a longer or shorter pulse.
+  </Step>
+  <Step title="Stop action">
+    The stop action turns both relays off. On openers that require a second
+    button press to stop mid-travel, replace this with another toggle pulse.
+  </Step>
+</Steps>
+
+## See also
+
+- Template Cover component
+- [GPIO Binary Sensor](/components/binary-sensor-index)
+- [GPIO Switch](/components/switch-index)
+- [Automations](/guides/automations)

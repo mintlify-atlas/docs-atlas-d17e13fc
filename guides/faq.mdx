@@ -1,0 +1,277 @@
+---
+title: "ESPHome Frequently Asked Questions"
+sidebarTitle: "FAQ"
+description: "Answers to the most common ESPHome questions: which ESP to use, migrating from Tasmota or ESPEasy, Home Assistant integration, and more."
+---
+
+This page collects the questions that come up most often in the ESPHome community — from hardware selection and first-time flashing to Home Assistant integration and configuration recovery. If you can't find your answer here, check the [Troubleshooting guide](/guides/troubleshooting/) or join the community on [Discord](https://discord.gg/KhAMKrd).
+
+## Hardware Selection
+
+<Accordion title="Which ESP microcontroller should I use for a new project?">
+The short answer: **use an ESP32**. Here is a more detailed breakdown:
+
+<CardGroup cols={2}>
+  <Card title="ESP32 (original)" icon="star">
+    Best overall support and the most mature platform. Rich built-in peripherals, best choice for wired Ethernet (built-in MAC), and the most community resources. Start here unless you have a specific reason not to.
+  </Card>
+  <Card title="ESP32-S3" icon="microchip">
+    Best for compute-intensive tasks: native USB peripheral, instruction-set extensions for machine learning (e.g., [Micro Wake Word](/components/voice-assistant)), and better raw performance than the original ESP32.
+  </Card>
+  <Card title="ESP32-C3" icon="bolt">
+    Single-core RISC-V, fewer GPIO pins, lower cost and power than dual-core variants. Intended by Espressif as a modern replacement for the ESP8266. Good choice for simple, cost-sensitive projects.
+  </Card>
+  <Card title="ESP32-C6" icon="wifi">
+    Similar to ESP32-C3 with additional connectivity: Thread (via OpenThread) and Zigbee. Good choice if you need Matter/Thread support in new projects.
+  </Card>
+</CardGroup>
+
+**Not recommended for new projects: ESP8266.** While existing ESP8266 devices are fully supported and continue to work well, all ESP32 variants offer roughly 5× more RAM, more flash, and more GPIO options at a comparable price. The ESP32-C3 is a direct, inexpensive replacement.
+
+**Other chips:** LibreTiny (Beken BK72xx, Realtek RTL87xx) support is available for flashing existing off-the-shelf smart home devices, but these chips are not recommended for new builds. RP2040, ESP32-H2, and other newer chips are supported but less mature.
+</Accordion>
+
+<Accordion title="How do I install ESPHome firmware onto my device for the first time?">
+The first install always requires a physical connection because there is no existing firmware to receive an OTA update. After that, all future updates can be pushed wirelessly.
+
+**Easiest method — ESPHome Device Builder (browser-based):**
+
+1. Open the ESPHome Device Builder and click **New Device**, then follow the wizard.
+2. Click **Install → Plug into this computer**.
+3. Connect the ESP via USB and select its serial port in the browser dialog. This requires Firefox, Chrome, or Edge (WebSerial support).
+
+**Manual method — CLI:**
+
+```bash
+# First install (USB required):
+esphome run my-device.yaml --device /dev/ttyUSB0
+
+# All subsequent installs (OTA):
+esphome run my-device.yaml
+```
+
+If your device needs to be held in bootloader/flash mode, hold down the `BOOT` (GPIO0) button while pressing `EN`/`RESET`, then release `EN` first.
+
+**Browser-based flasher (no CLI needed):** Visit [web.esphome.io](https://web.esphome.io/) to flash a pre-built binary directly from your browser.
+</Accordion>
+
+<Accordion title="Can I use ESPHome on non-Espressif hardware?">
+Yes, with some caveats:
+
+- **RP2040** (Raspberry Pi Pico, Pico W): Supported, though less mature than ESP32.
+- **LibreTiny** (BK72xx, RTL87xx, LN882x): Supported for flashing existing consumer devices that contain these chips. Not recommended for new builds.
+- **ESP32-H2**: Supported but less mature.
+
+For the best ESPHome experience, stick to the ESP32 family. We update our recommendations as support matures.
+</Accordion>
+
+## Migrating from Other Firmware
+
+<Accordion title="How do I migrate from Tasmota to ESPHome?">
+You can flash ESPHome over Tasmota using Tasmota's OTA mechanism — no disassembly or USB cable needed in most cases.
+
+**Important: before you do anything, back up your Tasmota configuration** (Tasmota UI → Configuration → Backup Configuration). Once ESPHome is installed, there is no way to recover your Tasmota settings.
+
+<Steps>
+
+### Note your device's MAC address
+
+In Tasmota, go to **Information** and record the MAC address. If you want your device to keep the same IP address via DHCP reservation, you'll need this.
+
+### Build an ESPHome binary
+
+Create your ESPHome YAML configuration and run:
+```bash
+esphome compile my-device.yaml
+```
+The binary is at `my-device/.pioenvs/my-device/firmware.bin`.
+
+### Flash via Tasmota's OTA
+
+In Tasmota, go to **Firmware Upgrade → Upgrade by file upload** and upload the ESPHome binary. Tasmota will flash it and reboot.
+
+### Verify and set up OTA for the future
+
+After reboot, the device should appear in your ESPHome dashboard. All future updates can be done over OTA.
+
+</Steps>
+
+<Warning>
+Some devices with only 1 MB of flash (e.g., ESP-01) cannot be flashed OTA because there is not enough space for both firmwares simultaneously. These require a USB flash.
+</Warning>
+</Accordion>
+
+<Accordion title="How do I migrate from ESPEasy or Espurna?">
+The process is identical to migrating from Tasmota: both ESPEasy and Espurna support OTA firmware uploads that can be used to install ESPHome.
+
+1. **Back up your existing configuration** — ESPHome cannot read or recover configurations from other firmware.
+2. **Record the MAC address** from the existing firmware's web UI.
+3. **Compile your ESPHome binary** with `esphome compile`.
+4. **Upload via the existing firmware's OTA** or web interface.
+
+If OTA is not available or the device only has 1 MB of flash, you will need to flash via USB.
+</Accordion>
+
+<Accordion title="Can configuration files be recovered from a flashed device?">
+**No.** ESPHome YAML configuration files are stored on your computer or the ESPHome Device Builder server — not on the microcontroller itself. The microcontroller only stores the compiled binary firmware.
+
+If you lose your YAML files and do not have a backup, you will need to recreate the configuration from scratch.
+
+**Always back up your YAML files.** If you use the ESPHome Device Builder, enable automatic backups or sync your config directory to a version-controlled repository.
+</Accordion>
+
+## Home Assistant Integration
+
+<Accordion title="How does ESPHome integrate with Home Assistant?">
+ESPHome devices communicate with Home Assistant using the **native API** — a fast, encrypted, binary protocol designed specifically for this integration.
+
+```yaml
+api:
+  encryption:
+    key: !secret api_key
+```
+
+Once a device is on your network, Home Assistant will automatically discover it via mDNS and prompt you to add it. The ESPHome integration is built into Home Assistant — no extra add-ons are required for the integration itself (though the ESPHome Device Builder add-on is needed if you want to manage devices from within Home Assistant).
+
+Every `name:`-bearing component in your YAML (sensors, switches, lights, etc.) automatically becomes an entity in Home Assistant.
+</Accordion>
+
+<Accordion title="My ESPHome device shows as unavailable in Home Assistant">
+This usually has one of a few causes:
+
+- **mDNS not working across VLANs or subnets**: If your ESP and Home Assistant are on different network segments, mDNS discovery may fail. Assign a static IP to the device and add it manually in the ESPHome integration.
+- **API connection lost**: ESPHome reboots automatically if it can't reach the API for too long (default: 15 minutes). Check your device logs for `api: Disconnecting`.
+- **Device is in deep sleep**: Entities from a sleeping device will appear unavailable while it is asleep. This is expected behavior — add the `deep_sleep:` component before the first Home Assistant add so the integration knows to expect it.
+- **Wi-Fi issues**: See the Wi-Fi troubleshooting section in the [Troubleshooting guide](/guides/troubleshooting/).
+</Accordion>
+
+<Accordion title="How do I use my Home Assistant secrets.yaml with ESPHome?">
+Create a `secrets.yaml` file in your ESPHome config directory that pulls in the Home Assistant one from the parent directory:
+
+```yaml
+# esphome/secrets.yaml
+<<: !include ../secrets.yaml
+```
+
+Then use `!secret` in your device YAML as usual:
+
+```yaml
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+```
+
+This lets you maintain a single set of secrets for both Home Assistant and ESPHome.
+</Accordion>
+
+<Accordion title="Why do entities appear as unavailable during deep sleep?">
+When a device enters deep sleep, it disconnects from the network and Home Assistant marks its entities as unavailable. This is correct behavior — the device really is unreachable.
+
+To prevent this, ensure the `deep_sleep:` component is present in your YAML **before** you first add the device to Home Assistant. This signals to the integration that the device will periodically sleep, and Home Assistant treats the unavailable state accordingly.
+
+If you added the device before adding `deep_sleep:`, remove and re-add it in Home Assistant.
+</Accordion>
+
+## Configuration and Workflow
+
+<Accordion title="How do I validate my ESPHome configuration without uploading?">
+```bash
+# Check YAML for errors and show the merged/resolved config
+esphome config my-device.yaml
+
+# Compile only (produces the binary but does not upload)
+esphome compile my-device.yaml
+```
+
+The `config` command is especially useful when using [substitutions](/guides/packages-substitutions/) or [packages](/guides/packages-substitutions/) — it shows the fully expanded configuration that ESPHome will actually compile.
+</Accordion>
+
+<Accordion title="How do I view logs without uploading new firmware?">
+```bash
+# View logs over the network (native API)
+esphome logs my-device.yaml
+
+# View logs via USB serial
+esphome logs my-device.yaml --device /dev/ttyUSB0
+```
+
+You can also view logs in the ESPHome Device Builder by clicking **Logs** on a device card, or in Home Assistant by viewing the ESPHome device's diagnostic page.
+</Accordion>
+
+<Accordion title="Why shouldn't I use underscores in my device name?">
+The `name:` field in your ESPHome YAML sets the device's hostname on the local network. According to [RFC 1912](https://datatracker.ietf.org/doc/html/rfc1912), underscores are not valid in hostnames. In practice, some DNS/DHCP servers accept them while others silently reject them, leading to intermittent connectivity failures that are very hard to diagnose.
+
+Use hyphens instead: `living-room-sensor` instead of `living_room_sensor`.
+
+If you need to rename a live device, use the `use_address` parameter to avoid losing the connection mid-rename:
+
+```yaml
+esphome:
+  name: living-room-sensor    # new name
+  use_address: living_room_sensor.local   # old name, for this one upload
+```
+
+Remove `use_address` after the rename is complete.
+</Accordion>
+
+<Accordion title="How do I update ESPHome itself to the latest version?">
+**Home Assistant add-on:** An update notification appears in the Add-on Store when a new version is available, just like any other add-on.
+
+**pip install:**
+```bash
+pip3 install -U esphome
+```
+
+**Docker:**
+```bash
+docker pull ghcr.io/esphome/esphome:stable
+```
+
+To try the **beta** channel:
+```bash
+pip3 install --pre -U esphome
+# or:
+docker pull ghcr.io/esphome/esphome:beta
+```
+
+Beta documentation is at [beta.esphome.io](https://beta.esphome.io). Dev documentation is at [next.esphome.io](https://next.esphome.io).
+</Accordion>
+
+<Accordion title="How do I report a bug or request a feature?">
+- **Bug reports**: [github.com/esphome/esphome/issues](https://github.com/esphome/esphome/issues)
+- **Feature requests**: [github.com/orgs/esphome/discussions](https://github.com/orgs/esphome/discussions)
+
+When filing a bug report, include:
+1. A minimal YAML snippet that reproduces the issue.
+2. The ESPHome version (`esphome version`).
+3. The target platform (ESP32, ESP8266, etc.) and framework.
+4. Relevant log output with `logger: level: DEBUG` or higher.
+5. Steps you have already tried.
+
+Vague reports ("X doesn't work") are very difficult to action. The more specific and reproducible your report, the faster it can be investigated.
+</Accordion>
+
+## Getting Help
+
+<CardGroup cols={2}>
+  <Card title="Discord" icon="discord" href="https://discord.gg/KhAMKrd">
+    Real-time community chat. Best for quick questions and general discussion.
+  </Card>
+  <Card title="Home Assistant Community" icon="comments" href="https://community.home-assistant.io/c/esphome">
+    Forum-style support. Great for longer troubleshooting threads.
+  </Card>
+  <Card title="GitHub Issues" icon="github" href="https://github.com/esphome/esphome/issues">
+    Bug reports and confirmed issues. Not for general support questions.
+  </Card>
+  <Card title="GitHub Discussions" icon="lightbulb" href="https://github.com/orgs/esphome/discussions">
+    Feature requests and ideas. Voting helps prioritise development.
+  </Card>
+</CardGroup>
+
+## See Also
+
+- [Troubleshooting Guide](/guides/troubleshooting/)
+- [OTA Updates Guide](/guides/ota-updates/)
+- [Packages and Substitutions](/guides/packages-substitutions/)
+- [Automations Guide](/guides/automations/)
+- [Security Best Practices](/guides/security-best-practices)

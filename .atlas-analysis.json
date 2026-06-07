@@ -1,28 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "ESPHome",
+  "projectType": "framework",
+  "projectName": "ESPHome",
+  "projectDescription": "ESPHome is an open-source framework that turns ESP32, ESP8266, RP2040, and other microcontrollers into fully-featured smart home devices using simple YAML configuration files—no C++ coding required.",
   "theme": "palm",
-  "colors": {
-    "primary": "#14bbf3",
-    "light": "#63cce9",
-    "dark": "#f4f4fc"
-  },
-  "favicon": "https://media.brand.dev/5f1aaba3-604c-4a56-b534-dc4977d14f2c.jpg",
-  "logo": {
-    "light": "https://media.brand.dev/3caae68d-7e8d-4467-8b0d-989c1a49a1ff.svg",
-    "dark": "https://media.brand.dev/3caae68d-7e8d-4467-8b0d-989c1a49a1ff.svg"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/esphome/esphome.io"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/esphome/esphome.io"
-    }
-  },
+  "primaryColor": "#14bbf3",
+  "lightColor": "#63cce9",
+  "darkColor": "#f4f4fc",
   "navigation": {
     "tabs": [
       {
@@ -153,5 +136,39 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "YAML-based device configuration — no C++ required",
+    "Supports ESP32 (all variants), ESP8266, RP2040, nRF52, BK72xx, and RTL87xx microcontrollers",
+    "Seamless Home Assistant integration via native API",
+    "Over-the-air (OTA) firmware updates",
+    "Hundreds of built-in sensor, display, light, and actuator components",
+    "Powerful automation engine with triggers, actions, and Lambdas",
+    "Local control with no cloud dependency",
+    "MQTT, web server, and REST/SSE API support",
+    "Bluetooth proxy and BLE device support",
+    "Voice assistant and media player capabilities"
+  ],
+  "publicApiSurface": [
+    "esphome run <config> — compile and upload firmware",
+    "esphome compile <config> — compile without uploading",
+    "esphome upload <config> — upload pre-compiled firmware",
+    "esphome logs <config> — stream device logs",
+    "esphome config <config> — validate and dump config",
+    "esphome dashboard — launch the web UI dashboard",
+    "esphome clean <config> — clean build artifacts",
+    "GET /events — Server-Sent Events for real-time state updates",
+    "GET /<domain>/<id> — REST API to read entity state",
+    "POST /<domain>/<id>/<action> — REST API to control entities",
+    "Native API (protobuf TCP, port 6053) — used by Home Assistant & aioesphomeapi",
+    "esphome: core config block",
+    "wifi: / ethernet: network config blocks",
+    "api: native API config block",
+    "mqtt: MQTT config block",
+    "ota: over-the-air update config block",
+    "logger: logging config block",
+    "sensor: / binary_sensor: / switch: / light: / fan: / climate: / cover: component domains",
+    "on_boot / on_shutdown / on_loop automation triggers",
+    "script: / interval: / globals: automation helpers"
+  ]
 }

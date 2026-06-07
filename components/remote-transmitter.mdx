@@ -1,0 +1,323 @@
+---
+title: "IR and RF Remote Transmitter Component"
+sidebarTitle: "Remote TX"
+description: "Transmit IR and RF remote control signals from ESPHome. Send NEC, Sony, raw codes and control TVs, AC units, and RF devices."
+---
+
+The `remote_transmitter` component lets your ESP device emit infrared (IR) or RF remote control signals through a GPIO pin. Connect an IR LED (with a transistor driver) or an RF transmitter module and you can replicate any remote control — turning TVs on and off, controlling AC units, operating RF power sockets, sending Roomba commands, and much more. All transmit actions can be triggered from automations, button presses, or Home Assistant services.
+
+<Note>
+  This component performs best on ESP32 or variants with dedicated RMT hardware peripheral for accurate signal timing. The ESP32-C2 and ESP32-C61 use a software GPIO bitbang implementation instead.
+</Note>
+
+## Minimal Example
+
+```yaml
+remote_transmitter:
+  pin: GPIO32
+  carrier_duty_percent: 50%   # 50% for IR, 100% for RF
+```
+
+## Configuration Variables
+
+<ParamField path="pin" type="Pin" required>
+  The GPIO pin connected to your IR LED driver or RF transmitter module.
+</ParamField>
+
+<ParamField path="carrier_duty_percent" type="int" required>
+  The duty cycle of the carrier signal. Use `50%` for IR (modulated at 38 kHz) and `100%` for RF (unmodulated 433 MHz or similar).
+</ParamField>
+
+<ParamField path="id" type="ID" optional>
+  Manually specify the component ID. Required when multiple transmitters are configured.
+</ParamField>
+
+### ESP32 RMT Options
+
+<ParamField path="rmt_symbols" type="int" optional>
+  RMT memory allocated to this component (must be a multiple of the block size). Controls DMA buffer size when `use_dma` is enabled.
+</ParamField>
+
+<ParamField path="clock_resolution" type="int" optional>
+  RMT peripheral clock in Hz. Defaults to `1000000` (1 µs resolution).
+</ParamField>
+
+<ParamField path="non_blocking" type="boolean" optional>
+  If `true`, transmit calls return immediately and the RMT runs in the background. The `on_complete` trigger fires when done. Defaults to `true`.
+</ParamField>
+
+<ParamField path="use_dma" type="boolean" optional>
+  Enable DMA mode on supported ESP32 variants. Allows very large `rmt_symbols` values.
+</ParamField>
+
+<ParamField path="eot_level" type="boolean" optional>
+  Override the end-of-transmit output level. Defaults to `false` unless the pin is inverted or open-drain.
+</ParamField>
+
+---
+
+## Transmitter Automations
+
+```yaml
+remote_transmitter:
+  pin: GPIO32
+  carrier_duty_percent: 50%
+  on_transmit:
+    - switch.turn_on: tx_enable     # power up TX hardware
+  on_complete:
+    - switch.turn_off: tx_enable    # power down TX hardware
+```
+
+---
+
+## Common Repeat Options
+
+All transmit actions support a `repeat` block for sending codes multiple times (required by many devices).
+
+```yaml
+on_...:
+  - remote_transmitter.transmit_nec:
+      address: 0x1234
+      command: 0x78AB
+      repeat:
+        times: 3
+        wait_time: 40ms
+```
+
+<ParamField path="repeat.times" type="int (templatable)" optional>
+  Number of times to send the code. Defaults to `1`.
+</ParamField>
+<ParamField path="repeat.wait_time" type="Time (templatable)" optional>
+  Gap between repetitions.
+</ParamField>
+<ParamField path="transmitter_id" type="ID" optional>
+  Which transmitter to use. Defaults to the first one defined.
+</ParamField>
+
+---
+
+## Protocol Actions
+
+### NEC (most common IR protocol)
+
+```yaml
+- remote_transmitter.transmit_nec:
+    address: 0x1234
+    command: 0x78AB
+    command_repeats: 1
+```
+
+<Note>
+  Since ESPHome 2021.12, NEC bits are transferred LSB-first per the standard. If migrating from an older config, reverse address and command bits. Also note that ESPHome does not auto-generate parity — include the full 16-bit value (e.g. `0xFF00` for command `0x00`).
+</Note>
+
+### Samsung
+
+```yaml
+- remote_transmitter.transmit_samsung:
+    data: 0xE0E040BF   # power toggle
+    nbits: 32          # default 32, also supports 48
+```
+
+### Samsung36
+
+```yaml
+- remote_transmitter.transmit_samsung36:
+    address: 0x0400
+    command: 0x000E00FF
+```
+
+### Sony
+
+```yaml
+- remote_transmitter.transmit_sony:
+    data: 0x123
+    nbits: 12    # default 12; also 15 or 20
+```
+
+### RC5
+
+```yaml
+- remote_transmitter.transmit_rc5:
+    address: 0x1F
+    command: 0x3F
+```
+
+### RC6
+
+```yaml
+- remote_transmitter.transmit_rc6:
+    address: 0x1F
+    command: 0x3F
+```
+
+### LG
+
+```yaml
+- remote_transmitter.transmit_lg:
+    data: 0x20DF10EF   # power on/off
+    nbits: 32          # default 28
+```
+
+### Panasonic
+
+```yaml
+- remote_transmitter.transmit_panasonic:
+    address: 0x1FEF
+    command: 0x1F3E065F
+```
+
+### Pioneer
+
+```yaml
+- remote_transmitter.transmit_pioneer:
+    rc_code_1: 0xA556
+    rc_code_2: 0xA506   # optional second part
+    repeat:
+      times: 2
+```
+
+### JVC
+
+```yaml
+- remote_transmitter.transmit_jvc:
+    data: 0x1234
+```
+
+### Pronto (universal format)
+
+```yaml
+- remote_transmitter.transmit_pronto:
+    data: "0000 006D 0010 0000 0008 0020 ..."
+```
+
+### Raw
+
+Send arbitrary pulse/space timings directly. Positive values = mark (on), negative = space (off), in microseconds.
+
+```yaml
+- remote_transmitter.transmit_raw:
+    carrier_frequency: 38000Hz
+    code: [4088, -1542, 1019, -510, 513, -1019, 510, -509]
+```
+
+### RC Switch (433 MHz RF)
+
+```yaml
+# Raw binary string
+- remote_transmitter.transmit_rc_switch_raw:
+    code: '001010011001111101011011'
+    protocol: 1
+
+# Type A (group/device)
+- remote_transmitter.transmit_rc_switch_type_a:
+    group: '01001'
+    device: '10110'
+    state: on
+    protocol: 1
+
+# Type B (address/channel)
+- remote_transmitter.transmit_rc_switch_type_b:
+    address: 1
+    channel: 3
+    state: off
+```
+
+### Coolix (AC units)
+
+```yaml
+- remote_transmitter.transmit_coolix:
+    first: 0xB23FE4
+    second: 0xB23FE4
+```
+
+### Toshiba AC
+
+```yaml
+- remote_transmitter.transmit_toshiba_ac:
+    rc_code_1: 0xB24DBF4040BF
+    rc_code_2: 0xD5660001003C
+```
+
+### Haier
+
+```yaml
+- remote_transmitter.transmit_haier:
+    code: [0xA6, 0xDA, 0x00, 0x00, 0x40, 0x40, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x05]
+```
+
+### Midea
+
+```yaml
+- remote_transmitter.transmit_midea:
+    code: [0xA2, 0x08, 0xFF, 0xFF, 0xFF]
+```
+
+### Roomba
+
+```yaml
+- remote_transmitter.transmit_roomba:
+    data: 0x88   # clean
+    repeat:
+      times: 3
+      wait_time: 17ms
+```
+
+<Warning>
+  Roomba vacuums require a code to be received at least 3 times. The `repeat: times: 3` is mandatory for reliable operation.
+</Warning>
+
+---
+
+## RF Transmitter Setup
+
+For 433 MHz RF transmitters, set `carrier_duty_percent: 100%` (unmodulated). For the `rpi_rf`-compatible behavior, use `times: 10` and `wait_time: 0s`.
+
+```yaml
+remote_transmitter:
+  pin: GPIO5
+  carrier_duty_percent: 100%
+
+on_...:
+  - remote_transmitter.transmit_rc_switch_type_a:
+      group: '01001'
+      device: '10110'
+      state: on
+      protocol: 1
+      repeat:
+        times: 10
+        wait_time: 0s
+```
+
+---
+
+## Complete Example: TV and AC Controller
+
+```yaml
+remote_transmitter:
+  pin: GPIO32
+  carrier_duty_percent: 50%
+
+button:
+  - platform: template
+    name: "TV Power"
+    on_press:
+      - remote_transmitter.transmit_nec:
+          address: 0x7F80
+          command: 0x3FC0
+
+  - platform: template
+    name: "TV Volume Up"
+    on_press:
+      - remote_transmitter.transmit_nec:
+          address: 0x7F80
+          command: 0x1CE3
+          repeat:
+            times: 2
+
+  - platform: template
+    name: "AC Cool 22°C"
+    on_press:
+      - remote_transmitter.transmit_coolix:
+          first: 0xB23FE4
+```

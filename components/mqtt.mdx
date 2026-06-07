@@ -1,0 +1,245 @@
+---
+title: "MQTT Component: Publish Sensor Data to a Broker"
+sidebarTitle: "MQTT"
+description: "Connect ESPHome devices to an MQTT broker to publish sensor values and receive commands. Covers broker config, topics, discovery, and TLS."
+---
+
+The `mqtt:` component connects your ESPHome device to an MQTT broker, enabling it to publish sensor readings and subscribe to command topics. All ESPHome components that support MQTT automatically publish state updates and subscribe to command topics using a consistent `<topic_prefix>/<component_type>/<name>/state` and `/command` scheme. ESPHome also supports Home Assistant MQTT auto-discovery out of the box, so your sensors and switches appear automatically in Home Assistant without any manual entity configuration.
+
+<Warning>
+  If you enable `mqtt:` but **do not** include `api:`, you must remove the `api:` key or set `api.reboot_timeout: 0s`. Without a connected native API client, ESPHome reboots after 15 minutes — which will interrupt your MQTT connection continuously.
+</Warning>
+
+## Minimal Example
+
+```yaml
+mqtt:
+  broker: 192.168.1.10
+  username: !secret mqtt_user
+  password: !secret mqtt_password
+```
+
+## Configuration Variables
+
+<ParamField path="broker" type="string" required>
+  The hostname or IP address of your MQTT broker.
+</ParamField>
+
+<ParamField path="port" type="int">
+  The broker port. Defaults to `1883`. Use `8883` for TLS connections.
+</ParamField>
+
+<ParamField path="username" type="string">
+  Authentication username. Leave empty for anonymous brokers.
+</ParamField>
+
+<ParamField path="password" type="string">
+  Authentication password. Leave empty for anonymous brokers.
+</ParamField>
+
+<ParamField path="client_id" type="string">
+  The MQTT client identifier. Defaults to `<node_name>-<mac_address>` to ensure uniqueness across devices.
+</ParamField>
+
+<ParamField path="topic_prefix" type="string">
+  Prefix for all auto-generated MQTT topics (state, command, availability). Defaults to the node name. Set to `null` to disable automatic topic publishing/subscribing entirely.
+</ParamField>
+
+<ParamField path="discovery" type="boolean">
+  Enable Home Assistant MQTT entity auto-discovery. Defaults to `true`.
+</ParamField>
+
+<ParamField path="discover_ip" type="boolean">
+  Enable ESPHome device discovery (used by the dashboard, CLI, and Home Assistant for API-based device detection). Publishes device metadata to `esphome/discover/<name>`. Defaults to `true`.
+</ParamField>
+
+<ParamField path="discovery_retain" type="boolean">
+  Whether to send discovery messages with the MQTT retain flag. Ensures entities reappear after a Home Assistant restart. Defaults to `true`.
+</ParamField>
+
+<ParamField path="discovery_prefix" type="string">
+  The MQTT topic prefix used for Home Assistant discovery messages. Defaults to `homeassistant`.
+</ParamField>
+
+<ParamField path="discovery_unique_id_generator" type="string">
+  How to generate unique IDs for discovered entities. `legacy` format: `ESP<type><object_id>`. `mac` format: `<mac>-<type>-<fnv1_hash(name)>`. Defaults to `legacy`.
+</ParamField>
+
+<ParamField path="discovery_object_id_generator" type="string">
+  How to generate `object_id` for entities. `device_name` uses `<device_name>_<friendly_name>` to avoid duplicate entity names across devices. Defaults to `none`.
+</ParamField>
+
+<ParamField path="clean_session" type="boolean">
+  Whether to request a clean session from the broker on connect. When `false`, the broker preserves subscription state across reconnects. Defaults to `false`.
+</ParamField>
+
+<ParamField path="keepalive" type="Time">
+  MQTT keepalive interval. Shorter values increase traffic but improve connection reliability detection. Defaults to `15s`.
+</ParamField>
+
+<ParamField path="reboot_timeout" type="Time">
+  How long to wait without an MQTT connection before rebooting. Set to `0s` to disable. Defaults to `15min`.
+</ParamField>
+
+<ParamField path="log_topic" type="MQTTMessage or null">
+  Topic to publish ESPHome log messages to. Set to `null` to disable MQTT log forwarding. Supports an additional `level` sub-key to filter log severity.
+</ParamField>
+
+<ParamField path="birth_message" type="MQTTMessage">
+  Message published when the broker connection is established. Used for availability reporting. Defaults to `<topic_prefix>/status` with payload `online`.
+</ParamField>
+
+<ParamField path="will_message" type="MQTTMessage">
+  Message the broker sends if the device disconnects ungracefully (last will and testament). Defaults to `<topic_prefix>/status` with payload `offline`.
+</ParamField>
+
+<ParamField path="shutdown_message" type="MQTTMessage">
+  Message published during a clean/graceful shutdown.
+</ParamField>
+
+<ParamField path="certificate_authority" type="string">
+  **ESP32 only.** PEM-encoded CA certificate for TLS broker connections. Paste the full certificate inline.
+</ParamField>
+
+<ParamField path="client_certificate" type="string">
+  **ESP32 only.** PEM-encoded client certificate for mutual TLS authentication.
+</ParamField>
+
+<ParamField path="client_certificate_key" type="string">
+  **ESP32 only.** PEM-encoded private key matching `client_certificate`.
+</ParamField>
+
+<ParamField path="skip_cert_cn_check" type="boolean">
+  **ESP32 only.** Skip Common Name validation in the server certificate. Note: MbedTLS does not support wildcard certificates (`*.example.com`). Defaults to `false`.
+</ParamField>
+
+<ParamField path="idf_send_async" type="boolean">
+  **ESP32 only.** Publish messages from a dedicated MQTT task instead of the main loop. Prevents blocking on poor network conditions. Defaults to `false`.
+</ParamField>
+
+<ParamField path="enable_on_boot" type="boolean">
+  Whether MQTT connects at boot. Set to `false` for deferred-connect workflows. Defaults to `true`.
+</ParamField>
+
+<ParamField path="publish_nan_as_none" type="boolean">
+  Publish `None` instead of `NaN` for unknown/unavailable sensor values. Matches Home Assistant's "unknown" state semantics. Defaults to `false`.
+</ParamField>
+
+<ParamField path="wait_for_connection" type="boolean">
+  Block other components from initializing until the MQTT connection is established. Defaults to `false`.
+</ParamField>
+
+<ParamField path="on_connect" type="Automation">
+  Triggered when a connection to the broker is established. A `session_present` boolean variable is available in lambdas.
+</ParamField>
+
+<ParamField path="on_disconnect" type="Automation">
+  Triggered when the broker connection is dropped. A `reason` variable of type `MQTTClientDisconnectReason` is available in lambdas.
+</ParamField>
+
+<ParamField path="on_message" type="Automation">
+  Subscribe to and react to messages on a specific topic. Requires a `topic` sub-key. The payload is available as `x` in lambdas.
+</ParamField>
+
+<ParamField path="on_json_message" type="Automation">
+  Like `on_message` but automatically decodes a JSON payload using ArduinoJson. The decoded `JsonObject` is available as `x`.
+</ParamField>
+
+## Advanced Example
+
+```yaml
+mqtt:
+  broker: mqtt.home.local
+  port: 8883
+  username: !secret mqtt_user
+  password: !secret mqtt_password
+  client_id: "esphome-kitchen"
+  topic_prefix: home/kitchen
+  discovery: true
+  discovery_prefix: homeassistant
+  discovery_object_id_generator: device_name
+  keepalive: 30s
+  reboot_timeout: 15min
+  log_topic:
+    topic: home/kitchen/logs
+    level: WARN
+
+  birth_message:
+    topic: home/kitchen/status
+    payload: online
+    retain: true
+  will_message:
+    topic: home/kitchen/status
+    payload: offline
+    retain: true
+
+  certificate_authority: |
+    -----BEGIN CERTIFICATE-----
+    <YOUR_CA_CERT_HERE>
+    -----END CERTIFICATE-----
+
+  on_connect:
+    - logger.log: "MQTT broker connected"
+  on_disconnect:
+    - logger.log: "MQTT broker disconnected"
+
+  on_message:
+    - topic: home/kitchen/command/fan
+      then:
+        - switch.toggle: kitchen_fan
+```
+
+## Publishing Messages
+
+```yaml
+on_button_press:
+  - mqtt.publish:
+      topic: home/kitchen/events
+      payload: "button_pressed"
+      qos: 1
+      retain: false
+
+  - mqtt.publish_json:
+      topic: home/kitchen/sensor_data
+      payload: |-
+        root["temperature"] = id(temp_sensor).state;
+        root["humidity"] = id(hum_sensor).state;
+```
+
+## Use MQTT for Discovery Only (with Native API)
+
+This setup uses MQTT for device discovery (dashboard + HA detection) while Home Assistant connects via the faster native API:
+
+```yaml
+api:
+  encryption:
+    key: !secret api_key
+
+mqtt:
+  broker: 192.168.1.10
+  username: !secret mqtt_user
+  password: !secret mqtt_password
+  discovery: false       # Disable entity discovery (HA uses API)
+  discover_ip: true      # Enable device discovery (HA finds the device)
+```
+
+## Cleaning Stale Discovery Messages
+
+```bash
+esphome clean-mqtt configuration.yaml
+
+# With Docker:
+docker run --rm -v "${PWD}":/config -it ghcr.io/esphome/esphome clean-mqtt configuration.yaml
+```
+
+<Note>
+  MQTT and Wi-Fi are compatible with each other, but MQTT and the native API can run simultaneously. If you use both, be aware of the `reboot_timeout` settings on each — both will independently trigger reboots if their respective connections are lost.
+</Note>
+
+<Warning>
+  MbedTLS (used for TLS on ESP32) does not validate wildcard certificates. If your broker uses `*.example.com`, the CN check will fail. Either use a non-wildcard certificate or set `skip_cert_cn_check: true` — but understand the security implications before doing so.
+</Warning>
+
+<Tip>
+  Set `discovery_object_id_generator: device_name` to generate entity IDs like `sensor.kitchen_temperature` instead of the generic `sensor.temperature`. This prevents collisions when multiple devices share the same sensor name.
+</Tip>

@@ -1,0 +1,222 @@
+---
+title: "Made for ESPHome: Certified Device Program"
+sidebarTitle: "Made for ESPHome"
+description: "The Made for ESPHome program lets device manufacturers ship products with pre-built ESPHome firmware and a standardized adoption flow."
+---
+
+Made for ESPHome is a manufacturer certification program run by the Open Home Foundation. Devices that carry the badge ship with ESPHome firmware pre-installed and support a standardized, zero-configuration adoption flow into Home Assistant — no serial cable, no flashing tools, and no manual configuration required. Users simply power on the device, follow the provisioning prompt, and the device appears in Home Assistant ready to use.
+
+---
+
+## Benefits
+
+- **Instant Home Assistant integration** — devices running certified firmware are detected automatically via mDNS and adopted with a single click.
+- **No flashing required** — end users receive a working device out of the box.
+- **Full user control** — the configuration is open source and users can take ownership of the firmware, modify it, and push their own updates.
+- **Community visibility** — approved devices are listed on [devices.esphome.io](https://devices.esphome.io), the official ESPHome device database.
+- **Logo licensing** — approved manufacturers may use the Made for ESPHome logo on their product and packaging.
+
+---
+
+## Requirements
+
+### Wi-Fi Devices
+
+For devices that use Wi-Fi, the following provisioning components must be included:
+
+- **`esp32_improv`** — enables BLE-based Wi-Fi credential provisioning via the [Improv BLE](https://www.improv-wifi.com/) standard.
+- **`improv_serial`** — enables USB serial provisioning via [Improv Serial](https://www.improv-wifi.com/serial/) (recommended when a USB port is available).
+
+These requirements do **not** apply to devices that connect exclusively via physical Ethernet.
+
+### All Devices
+
+Every Made for ESPHome device must meet these criteria:
+
+- Runs ESPHome as its firmware on an ESP32 or a supported ESP32 variant (S2, S3, C3, C6, etc.)
+- The ESPHome YAML configuration is **open source** and publicly accessible
+- Users can apply firmware updates (OTA must be configured)
+- Every component/platform has an explicit `id:` so users can [Extend](/guides/packages-substitutions) or [Remove](/guides/packages-substitutions) configuration variables when they take control
+- The configuration supports adoption via `dashboard_import:`, meaning:
+  - No secrets or passwords are embedded in the YAML
+  - Network configuration uses defaults (no static IPs or custom DNS)
+  - The configuration compiles and runs successfully without any changes after adoption
+  - Remote packages referenced in the YAML must also satisfy the above criteria
+- The product name must **not** contain "ESPHome" — it may only *end with* "for ESPHome"
+
+---
+
+## The `project:` Block
+
+The `project:` key inside `esphome:` is required for dashboard adoption to work. It identifies your product to the ESPHome dashboard and Home Assistant:
+
+```yaml
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+  name_add_mac_suffix: true
+  project:
+    name: my-company.smart-plug-4000
+    version: "2.1.0"
+```
+
+<ParamField path="project.name" type="string" required>
+  A unique identifier for your product in `<manufacturer>.<product>` format. Use only lowercase letters, digits, and hyphens. This string is stored in the device firmware and used by the dashboard to identify the device model.
+</ParamField>
+
+<ParamField path="project.version" type="string" required>
+  The current firmware version string. Displayed in Home Assistant and on the ESPHome dashboard. Increment this when you release firmware updates.
+</ParamField>
+
+---
+
+## How Adoption Works
+
+<Steps>
+  ### Device Powers On
+
+  The device starts in provisioning mode. It broadcasts a BLE advertisement (via `esp32_improv`) and/or listens for Improv commands over USB serial (via `improv_serial`).
+
+  ### User Provisions Wi-Fi
+
+  Using the Home Assistant companion app, ESP Web Tools, or any Improv-compatible tool, the user selects their Wi-Fi network and enters credentials. The device connects and announces itself via mDNS.
+
+  ### Dashboard Detects the Device
+
+  The ESPHome dashboard (or Home Assistant's ESPHome integration) discovers the device via mDNS. It reads the `project.name` and uses `dashboard_import.package_import_url` to download the manufacturer's YAML configuration.
+
+  ### User Adopts the Device
+
+  The user clicks **Adopt** in the dashboard. ESPHome creates a minimal local configuration that references the manufacturer's YAML as a package, compiles it, and pushes it via OTA. The device is now under the user's control.
+</Steps>
+
+---
+
+## Complete Manufacturer Configuration Example
+
+```yaml
+# Substitutions let end-users rename the device after adoption
+substitutions:
+  name: "smart-plug-4000"
+  friendly_name: "Smart Plug 4000"
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+  # Append the MAC address to guarantee unique names when flashing
+  # multiple devices from one firmware image
+  name_add_mac_suffix: true
+  project:
+    name: my-company.smart-plug-4000
+    version: "2.1.0"
+
+esp32:
+  variant: esp32c3
+  framework:
+    type: esp-idf
+
+# Required — the native API is used by dashboard adoption
+api:
+
+# Required — allows OTA firmware updates after adoption
+ota:
+  platform: esphome
+
+logger:
+
+# This URL points to the public YAML so the dashboard can
+# fetch and import it automatically during adoption
+dashboard_import:
+  package_import_url: github://my-company/smart-plug-4000/smart-plug-4000.yaml@v2
+  import_full_config: false
+
+wifi:
+  # Open AP with a predictable password lets the device come up
+  # in provisioning mode before the user sets their own credentials
+  ap:
+    password: "12345678"
+
+# Captive portal redirects AP-connected users to the provisioning page
+captive_portal:
+
+# BLE provisioning — scanned by the Home Assistant app
+esp32_improv:
+  authorizer: none
+
+# USB serial provisioning — works during initial flash via USB
+improv_serial:
+  next_url: "https://my-company.example.com/setup?ip={{ip_address}}&name={{device_name}}&version={{esphome_version}}"
+
+# --- Device-specific components below ---
+# All components have explicit IDs so users can override them after adoption
+
+switch:
+  - platform: gpio
+    id: relay_main
+    name: "Outlet"
+    pin: GPIO5
+    restore_mode: RESTORE_DEFAULT_OFF
+
+sensor:
+  - platform: hlw8012
+    id: power_sensor
+    sel_pin:
+      number: GPIO18
+      inverted: true
+    cf_pin: GPIO4
+    cf1_pin: GPIO19
+    current:
+      name: "Current"
+    voltage:
+      name: "Voltage"
+    power:
+      name: "Power"
+
+binary_sensor:
+  - platform: gpio
+    id: button_main
+    pin:
+      number: GPIO9
+      inverted: true
+      mode: INPUT_PULLUP
+    name: "Button"
+    on_press:
+      - switch.toggle: relay_main
+```
+
+---
+
+## Getting Approved
+
+<Steps>
+  ### Submit a Device PR
+
+  Create a pull request in the [devices.esphome.io](https://github.com/esphome/devices.esphome.io/pulls) repository to add your device to the public device database. Include the device name, description, and a link to the open-source YAML configuration.
+
+  ### Apply for Logo Usage
+
+  Email [esphome@openhomefoundation.org](mailto:esphome@openhomefoundation.org) to request permission to use the Made for ESPHome logo. **Include the link to your PR** so the team can review both together.
+
+  ### Review and Approval
+
+  The ESPHome team will review your submission against the requirements listed above. They may request changes if any requirement is not met. Once approved, your device will be merged into the device database and you will receive confirmation that you may use the logo.
+</Steps>
+
+<Note>
+  Approval does not expire automatically, but the ESPHome team may revisit certifications if future firmware updates cause a device to no longer meet the requirements — for example, if a configuration is changed to include embedded secrets or remove OTA support.
+</Note>
+
+---
+
+## Logo Assets
+
+After approval, the following logo variants are available for use on your product and packaging:
+
+| Variant | Formats |
+|---------|---------|
+| Black on white | SVG, PNG |
+| White on black | SVG, PNG |
+| Black on transparent | SVG, PNG |
+| White on transparent | SVG, PNG |
+
+Logo files are available at `https://esphome.io/images/made-for-esphome-*.svg`.

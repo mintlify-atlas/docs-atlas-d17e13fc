@@ -1,0 +1,225 @@
+---
+title: "Infrared and RF Remote Receiver Component"
+sidebarTitle: "Remote Receiver"
+description: "Receive IR and RF remote control signals with ESPHome. Decode NEC, Sony, RC5, Pioneer, and raw codes for automation triggers."
+---
+
+The `remote_receiver` component lets your ESP device listen for infrared (IR) and RF remote control signals on a GPIO pin and decode them into known protocols — NEC, Sony, Samsung, RC5, RC6, Panasonic, Pioneer, and dozens more. Once decoded, signals can trigger automations directly or be matched by binary sensors that momentarily activate when a specific code is received.
+
+## Minimal Example
+
+```yaml
+remote_receiver:
+  pin:
+    number: GPIO18
+    inverted: true
+    mode:
+      input: true
+      pullup: true
+  dump: all
+```
+
+With `dump: all`, every received code appears in the ESPHome logs at `DEBUG` level. Use this to discover the protocol and address/command values of any remote.
+
+## Configuration Variables
+
+<ParamField path="pin" type="Pin" required>
+  The GPIO pin connected to the data output of your IR or RF receiver module (e.g. TSOP38238, SRX882).
+</ParamField>
+
+<ParamField path="dump" type="list or 'all'" optional>
+  Protocols to decode and print in the logs. Set to `all` to enable every available decoder. Individual options include: `nec`, `samsung`, `sony`, `rc5`, `rc6`, `panasonic`, `pioneer`, `lg`, `jvc`, `aeha`, `raw`, `pronto`, `rc_switch`, `coolix`, `haier`, `midea`, `toshiba_ac`, `nexa`, `keeloq`, `dyson`, `dooya`, `drayton`, and many more.
+</ParamField>
+
+<ParamField path="tolerance" type="int or Time or mapping" optional>
+  Acceptable deviation in signal timing. Defaults to `25%`. Can be expressed as a percentage or a fixed time value. For noisy RF signals, try increasing to `50%` or `60%`.
+</ParamField>
+
+<ParamField path="filter" type="Time" optional>
+  Ignore pulses shorter than this duration. Removes glitches from noisy signals. Defaults to `50us`.
+</ParamField>
+
+<ParamField path="idle" type="Time" optional>
+  Time a signal must remain stable before it is considered complete. Defaults to `10ms`. On ESP32 with RMT hardware, maximum is `65536us` (at default clock resolution).
+</ParamField>
+
+<ParamField path="buffer_size" type="int" optional>
+  Internal buffer for received codes. Defaults to `10kB` on ESP32 and `1kB` on ESP8266.
+</ParamField>
+
+<ParamField path="id" type="ID" optional>
+  Manually specify the component ID. Required when multiple receivers are configured.
+</ParamField>
+
+### ESP32 RMT Options
+
+<ParamField path="rmt_symbols" type="int" optional>
+  RMT memory allocated to this component (multiples of block size). Controls DMA buffer size when `use_dma` is enabled.
+</ParamField>
+
+<ParamField path="clock_resolution" type="int" optional>
+  RMT peripheral clock in Hz. Defaults to `1000000` (1 MHz = 1 µs resolution).
+</ParamField>
+
+<ParamField path="use_dma" type="boolean" optional>
+  Enable DMA mode on supported ESP32 variants for large buffer sizes.
+</ParamField>
+
+<ParamField path="filter_symbols" type="int" optional>
+  Filter out received data shorter than this many RMT symbols.
+</ParamField>
+
+---
+
+## Automation Triggers
+
+Each supported protocol has a corresponding `on_<protocol>` trigger. The decoded data is passed as variable `x`.
+
+```yaml
+remote_receiver:
+  pin: GPIO18
+  dump: all
+  on_nec:
+    then:
+      - lambda: |-
+          ESP_LOGI("remote", "NEC address=0x%04X command=0x%04X",
+            x.address, x.command);
+  on_samsung:
+    then:
+      - if:
+          condition:
+            lambda: "return x.data == 0xE0E040BF;"  # volume up
+          then:
+            - media_player.volume_up: my_player
+```
+
+Available triggers: `on_nec`, `on_samsung`, `on_samsung36`, `on_sony`, `on_rc5`, `on_rc6`, `on_panasonic`, `on_pioneer`, `on_lg`, `on_jvc`, `on_aeha`, `on_coolix`, `on_haier`, `on_midea`, `on_toshiba_ac`, `on_raw`, `on_pronto`, `on_rc_switch`, `on_nexa`, `on_keeloq`, `on_dyson`, `on_dooya`, `on_drayton`, `on_beo4`, `on_byronsx`, `on_canalsat`, `on_canalsatld`, `on_dish`, `on_gobox`, `on_magiquest`, `on_roomba`, `on_symphony`, `on_mirage`, `on_toto`, `on_abbwelcome`.
+
+<Note>
+  Raw codes (`on_raw`) give you a list of pulse widths in microseconds (positive = ON, negative = OFF). You can copy this list directly into a `remote_transmitter` configuration to replay the signal.
+</Note>
+
+---
+
+## Binary Sensor: Matching Specific Codes
+
+Use `binary_sensor` with `platform: remote_receiver` to create entities that briefly activate when a specific remote code is detected.
+
+```yaml
+binary_sensor:
+  - platform: remote_receiver
+    name: "TV Power Button"
+    nec:
+      address: 0x7F80
+      command: 0x3FC0
+
+  - platform: remote_receiver
+    name: "AC Cool Mode"
+    samsung:
+      data: 0xE0E08877
+      nbits: 32
+
+  - platform: remote_receiver
+    name: "RF Socket 1 ON"
+    rc_switch_type_a:
+      group: "01001"
+      device: "10110"
+      state: true
+```
+
+<ParamField path="receiver_id" type="ID" optional>
+  Specify which receiver to use when multiple receivers are configured.
+</ParamField>
+
+### Supported Code Types for Binary Sensors
+
+Each entry uses the same fields as the corresponding `on_<protocol>` trigger:
+
+| Protocol | Key Fields |
+|----------|------------|
+| `nec` | `address`, `command` |
+| `samsung` | `data`, `nbits` (default 32) |
+| `sony` | `data`, `nbits` (default 12) |
+| `rc5` | `address`, `command` |
+| `rc6` | `address`, `command` |
+| `panasonic` | `address`, `command` |
+| `pioneer` | `rc_code_1` |
+| `lg` | `data`, `nbits` (default 28) |
+| `raw` | `code` (list of int) |
+| `rc_switch_type_a` | `group`, `device`, `state` |
+| `rc_switch_type_b` | `address`, `channel`, `state` |
+| `rc_switch_raw` | `code` (binary string) |
+
+---
+
+## Hardware Setup Tips
+
+<Warning>
+  Many IR receiver modules (like the TSOP38238) have an active-low output. Use `inverted: true` and `mode: {input: true, pullup: true}` on the pin.
+</Warning>
+
+```yaml
+# Typical TSOP38238 / TSOP31238 configuration
+remote_receiver:
+  pin:
+    number: GPIO18
+    inverted: true
+    mode:
+      input: true
+      pullup: true
+  dump: all
+  filter: 50us
+  idle: 10ms
+```
+
+```yaml
+# RF 433 MHz receiver (no invert, no pullup)
+remote_receiver:
+  pin: GPIO21
+  dump: rc_switch
+  tolerance: 60%
+  filter: 4us
+  idle: 4ms
+```
+
+<Tip>
+  For the Sonoff RF Bridge, you can bypass the onboard EFM8BB1 co-processor with a hardware mod and use `pin: 4` for RX and `pin: 5` for TX with `carrier_duty_percent: 100%`.
+</Tip>
+
+## Complete Example: TV Remote Control
+
+```yaml
+remote_receiver:
+  pin:
+    number: GPIO18
+    inverted: true
+    mode:
+      input: true
+      pullup: true
+  dump: nec
+
+binary_sensor:
+  - platform: remote_receiver
+    name: "TV Volume Up"
+    nec:
+      address: 0x7F80
+      command: 0x1CE3
+    on_press:
+      - media_player.volume_up: living_room_speaker
+
+  - platform: remote_receiver
+    name: "TV Volume Down"
+    nec:
+      address: 0x7F80
+      command: 0x9C63
+    on_press:
+      - media_player.volume_down: living_room_speaker
+
+  - platform: remote_receiver
+    name: "TV Power"
+    nec:
+      address: 0x7F80
+      command: 0x3FC0
+    on_press:
+      - switch.toggle: tv_power_relay
+```

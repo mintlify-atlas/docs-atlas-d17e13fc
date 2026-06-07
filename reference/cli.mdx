@@ -1,0 +1,454 @@
+---
+title: "ESPHome CLI Command Reference"
+sidebarTitle: "CLI Reference"
+description: "Full reference for ESPHome CLI commands: run, compile, upload, logs, config, dashboard, clean. Covers all flags, options, and environment variables."
+---
+
+The ESPHome command-line interface (CLI) is the primary tool for compiling, uploading, and debugging firmware on ESP32, ESP8266, and RP2040 devices. Every operation — from first-flash to daily OTA updates — flows through a consistent command structure, and all commands accept one or more YAML configuration files as input.
+
+## Base Usage
+
+```bash
+esphome [OPTIONS] <COMMAND> <CONFIG> [ARGUMENTS]
+```
+
+You can pass multiple configuration files to most commands by listing them after the command name:
+
+```bash
+esphome run livingroom.yaml kitchen.yaml
+```
+
+ESPHome processes each file in sequence and reports success or failure for each one independently.
+
+---
+
+## Global Options
+
+Global options appear between `esphome` and the command name and apply to all commands.
+
+<ParamField path="-h, --help" type="flag">
+  Print available commands and their arguments. You can also append `--help` to any specific command to see its flags:
+
+  ```bash
+  esphome run --help
+  ```
+</ParamField>
+
+<ParamField path="-v, --verbose" type="flag">
+  Enable verbose ESPHome log output. Equivalent to setting the environment variable `ESPHOME_VERBOSE=true`.
+</ParamField>
+
+<ParamField path="-q, --quiet" type="flag">
+  Suppress all ESPHome log output. Useful in CI pipelines where only exit codes matter.
+</ParamField>
+
+<ParamField path="-s, --substitution KEY VALUE" type="string (repeatable)">
+  Define or override a substitution variable at the command line. May be specified multiple times. See [Command-line Substitutions](/guides/packages-substitutions) for details.
+
+  ```bash
+  esphome -s name my_sensor -s board esp32dev compile device.yaml
+  ```
+</ParamField>
+
+<ParamField path="--toolchain TOOLCHAIN" type="string">
+  Select the toolchain used to compile the project. Accepted values:
+
+  - `platformio` *(default)* — uses PlatformIO to manage the ESP-IDF/Arduino layers.
+  - `esp-idf` — uses ESPHome's native ESP-IDF integration with automatic framework installation.
+
+  If `esp32.toolchain` is also set in YAML, the CLI option takes precedence. See [ESP-IDF Toolchain](/reference/esp-idf) for details.
+
+  ```bash
+  esphome --toolchain esp-idf compile my_device.yaml
+  ```
+</ParamField>
+
+---
+
+## Commands
+
+### `run`
+
+The most commonly used command. It validates the configuration, compiles the firmware, uploads it to the device, and then streams logs.
+
+```bash
+esphome run <CONFIG> [OPTIONS]
+```
+
+**Example:**
+
+```bash
+esphome run my-sensor.yaml --device 192.168.1.100
+```
+
+<ParamField path="--device DEVICE" type="string (repeatable)">
+  Specify the port or IP address to use for upload and logging. Accepts:
+
+  - A serial port path, e.g. `/dev/cu.SLAB_USBtoUART` or `COM3`
+  - An IPv4 or IPv6 address for OTA, e.g. `192.168.1.176` or `2001:db8::1`
+  - The keyword `OTA` to auto-resolve the address via MQTT, DNS, or mDNS
+
+  Repeat the flag to supply fallback addresses — ESPHome tries each in order:
+
+  ```bash
+  esphome run my-device.yaml --device 192.168.1.100 --device 2001:db8::1
+  ```
+</ParamField>
+
+<ParamField path="--upload_speed BAUD_RATE" type="integer">
+  Serial upload baud rate. Defaults to `460800` or the value of `ESPHOME_UPLOAD_SPEED`. Can also be set per-config in `platformio_options`.
+</ParamField>
+
+<ParamField path="--no-logs" type="flag">
+  Skip opening the log view after a successful upload. Useful in scripts where you only need to flash the device.
+</ParamField>
+
+<ParamField path="--topic TOPIC" type="string">
+  Override the MQTT topic used for log streaming.
+</ParamField>
+
+<ParamField path="--username USERNAME" type="string">
+  MQTT username for log streaming.
+</ParamField>
+
+<ParamField path="--password PASSWORD" type="string">
+  MQTT password for log streaming.
+</ParamField>
+
+<ParamField path="--client-id CLIENT_ID" type="string">
+  MQTT client ID for log streaming. Defaults to a random value.
+</ParamField>
+
+<ParamField path="--host-port HOST_PORT" type="integer">
+  Host port for legacy Over-the-Air upload connections.
+</ParamField>
+
+<ParamField path="--ota-platform {esphome,web_server}" type="string">
+  Force a specific OTA platform. By default ESPHome uses whatever is configured in YAML. Use `web_server` when the native OTA password is lost but web server credentials are still known.
+</ParamField>
+
+<ParamField path="--reset" type="flag">
+  Reset the device before the log view starts. Also configurable via `ESPHOME_SERIAL_LOGGING_RESET=true`.
+</ParamField>
+
+---
+
+### `compile`
+
+Validates the configuration and compiles the firmware without uploading it. Useful for CI checks or pre-building before deploying to a remote location.
+
+```bash
+esphome compile <CONFIG> [OPTIONS]
+```
+
+```bash
+esphome compile my-sensor.yaml
+```
+
+<ParamField path="--only-generate" type="flag">
+  Only generate the C++ source files; do not run the actual compiler. The generated code lands in `<NODE_NAME>/src/main.cpp`.
+</ParamField>
+
+<Note>
+  Any command that accepts a YAML `<CONFIG>` also accepts a `.esphomebundle.tar.gz` bundle file produced by `esphome bundle`. The bundle is automatically extracted before the command runs.
+</Note>
+
+---
+
+### `upload`
+
+Uploads the most recently compiled firmware to a device without recompiling. Run `esphome compile` first.
+
+```bash
+esphome upload <CONFIG> [OPTIONS]
+```
+
+```bash
+esphome upload my-sensor.yaml --device /dev/ttyUSB0
+```
+
+<ParamField path="--device DEVICE" type="string (repeatable)">
+  Serial port or IP address to upload to. Supports fallback addresses when repeated. See [`run --device`](#run) for full details.
+</ParamField>
+
+<ParamField path="--upload_speed BAUD_RATE" type="integer">
+  Baud rate for serial upload. Defaults to `460800`.
+</ParamField>
+
+<ParamField path="--host-port HOST_PORT" type="integer">
+  Host port for legacy OTA upload connections.
+</ParamField>
+
+<ParamField path="--ota-platform {esphome,web_server}" type="string">
+  Force a specific OTA platform for this upload. See [`run --ota-platform`](#run) for details.
+</ParamField>
+
+---
+
+### `logs`
+
+Streams log output from a device. ESPHome automatically selects the log transport — native API, MQTT, or serial — based on the configuration.
+
+```bash
+esphome logs <CONFIG> [OPTIONS]
+```
+
+```bash
+esphome logs my-sensor.yaml --device 192.168.1.100
+```
+
+<ParamField path="--device DEVICE" type="string (repeatable)">
+  Serial port, IP address, or `OTA`. When using the native API for logs, multiple addresses are passed to the API client which uses the Happy Eyeballs algorithm (RFC 8305) to connect via the fastest available path.
+
+  ```bash
+  esphome logs my-device.yaml --device 192.168.1.100 --device 2001:db8::1
+  ```
+</ParamField>
+
+<ParamField path="--topic TOPIC" type="string">
+  MQTT topic to subscribe to for log messages.
+</ParamField>
+
+<ParamField path="--username USERNAME" type="string">
+  MQTT username.
+</ParamField>
+
+<ParamField path="--password PASSWORD" type="string">
+  MQTT password.
+</ParamField>
+
+<ParamField path="--client-id CLIENT_ID" type="string">
+  MQTT client ID.
+</ParamField>
+
+<ParamField path="--reset" type="flag">
+  Reset the device before streaming logs. Also set via `ESPHOME_SERIAL_LOGGING_RESET=true`.
+</ParamField>
+
+<ParamField path="--no-states" type="flag">
+  Suppress entity state-change lines (`[S]` prefix) from the native API log stream, showing only firmware log messages.
+</ParamField>
+
+<Tip>
+  For devices in remote or inaccessible locations, use `aioesphomeapi-logs` (bundled with ESPHome) for API-based log streaming:
+
+  ```bash
+  aioesphomeapi-logs 192.168.1.100
+  # With encryption
+  aioesphomeapi-logs 192.168.1.100 --noise-psk <your-api-key>
+  ```
+</Tip>
+
+---
+
+### `config`
+
+Validates the YAML configuration and prints the fully-resolved output, including all substitutions and packages. No compilation occurs.
+
+```bash
+esphome config <CONFIG>
+```
+
+```bash
+esphome config my-sensor.yaml
+```
+
+---
+
+### `config-hash`
+
+Loads the configuration, calculates a hash, and prints it. Compare the hash against the Version Text Sensor on a running device to confirm it is running the expected firmware.
+
+```bash
+esphome config-hash <CONFIG>
+```
+
+---
+
+### `dashboard`
+
+Launches the ESPHome web dashboard — a browser-based UI for managing all your devices. This command accepts a **directory** of YAML files rather than a single configuration file.
+
+```bash
+esphome dashboard <CONFIG_DIR> [OPTIONS]
+```
+
+```bash
+esphome dashboard ./config/ --port 6052 --open-ui
+```
+
+<ParamField path="--port PORT" type="integer">
+  HTTP port for the dashboard server. Defaults to `6052`.
+</ParamField>
+
+<ParamField path="--address ADDRESS" type="string">
+  Network address to bind to. Defaults to `0.0.0.0` (all interfaces).
+</ParamField>
+
+<ParamField path="--socket SOCKET" type="string">
+  Unix socket path to bind to instead of a TCP port. Cannot be combined with `--open-ui`.
+</ParamField>
+
+<ParamField path="--username USERNAME" type="string">
+  Optional username to require for HTTP Basic Auth on the dashboard.
+</ParamField>
+
+<ParamField path="--password PASSWORD" type="string">
+  Optional password for HTTP Basic Auth.
+</ParamField>
+
+<ParamField path="--open-ui" type="flag">
+  Automatically open the dashboard in a browser once the server is ready. Does not work with `--socket`.
+</ParamField>
+
+---
+
+### `clean`
+
+Removes all build artifacts for a configuration. Run this when switching frameworks or resolving stubborn build errors.
+
+```bash
+esphome clean <CONFIG>
+```
+
+```bash
+esphome clean my-sensor.yaml
+```
+
+---
+
+### `clean-all`
+
+Removes all build files, PlatformIO platform and package files, and the PlatformIO core directory. Unlike `clean`, a configuration file is optional — if none is provided, ESPHome cleans the `.esphome` directory in the current working directory.
+
+```bash
+esphome clean-all [<CONFIG>...]
+```
+
+<Note>
+  Storage files (`.json` files and the `storage` directory inside `.esphome`) are preserved so the dashboard continues to function correctly.
+</Note>
+
+---
+
+### `clean-mqtt`
+
+Clears retained MQTT discovery messages from the MQTT broker. Useful when renaming or removing a device that was previously using MQTT discovery with Home Assistant.
+
+```bash
+esphome clean-mqtt <CONFIG> [OPTIONS]
+```
+
+<ParamField path="--topic TOPIC" type="string">
+  The MQTT topic to clear retained messages from. Defaults to the device's configured MQTT discovery topic.
+</ParamField>
+
+<ParamField path="--username USERNAME" type="string">
+  MQTT username.
+</ParamField>
+
+<ParamField path="--password PASSWORD" type="string">
+  MQTT password.
+</ParamField>
+
+<ParamField path="--client-id CLIENT_ID" type="string">
+  MQTT client ID.
+</ParamField>
+
+---
+
+### `bundle`
+
+Packages a YAML configuration and all its local dependencies into a self-contained `.esphomebundle.tar.gz` archive. Transfer the bundle to another machine for compilation with `esphome compile device.esphomebundle.tar.gz`.
+
+```bash
+esphome bundle <CONFIG> [OPTIONS]
+```
+
+```bash
+esphome bundle my-device.yaml --output /tmp/my-device.esphomebundle.tar.gz
+```
+
+The bundle includes local `!include` files, `secrets.yaml` (filtered to referenced keys), fonts, images, certificates, and local `external_components` directories. Remote git-based resources are **not** bundled — they are fetched during compilation on the target machine.
+
+<ParamField path="-o, --output PATH" type="string">
+  Custom output path for the bundle archive. Defaults to the config file path with `.esphomebundle.tar.gz` extension.
+</ParamField>
+
+<ParamField path="--list-only" type="flag">
+  List all files that would be bundled without creating the archive.
+</ParamField>
+
+---
+
+### `update-all`
+
+Compiles and uploads firmware to all devices in a directory via OTA. Prints a summary of successes and failures at the end.
+
+```bash
+esphome update-all <CONFIG>...
+```
+
+```bash
+esphome update-all ./config/
+```
+
+Internally this runs `esphome run <CONFIG> --no-logs --device OTA` for each device found.
+
+---
+
+### `analyze-memory`
+
+Compiles a configuration and analyzes flash and RAM usage by component. Useful for identifying memory bottlenecks, especially on memory-constrained devices like the ESP8266.
+
+```bash
+esphome analyze-memory <CONFIG>
+```
+
+<Note>
+  This is an advanced command primarily intended for developers and contributors debugging memory issues.
+</Note>
+
+---
+
+### `wizard`
+
+Starts an interactive configuration creation wizard that guides you through setting up a new ESPHome node.
+
+```bash
+esphome wizard <CONFIG>
+```
+
+---
+
+### `version`
+
+Prints the current ESPHome version and exits.
+
+```bash
+esphome version
+```
+
+---
+
+## Shell Auto-completion
+
+ESPHome's CLI supports tab-completion in Bash and ZSH via `argcomplete`. Register it by adding the following to your `~/.bashrc`:
+
+```bash
+eval "$(register-python-argcomplete esphome)"
+```
+
+See the [argcomplete documentation](https://kislyuk.github.io/argcomplete/) for more details.
+
+---
+
+## Discovering Devices on the Network
+
+Use `aioesphomeapi-discover` (bundled with ESPHome) to find all online ESPHome devices on the local network:
+
+```bash
+aioesphomeapi-discover
+```
+
+The response lists: `Status | Name | Address | MAC | Version | Platform | Board`

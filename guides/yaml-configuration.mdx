@@ -1,0 +1,328 @@
+---
+title: "YAML Configuration in ESPHome"
+sidebarTitle: "YAML Configuration"
+description: "Learn ESPHome YAML syntax: scalars, sequences, mappings, anchors, multi-line strings, secrets, substitutions, and ESPHome-specific extensions."
+---
+
+ESPHome configuration files are written in YAML — a human-friendly data serialization format designed to be easy to read and edit. The order of top-level configuration blocks in an ESPHome YAML file is generally unimportant, since the entire file is parsed before any validation or processing begins. YAML is a superset of JSON, so valid JSON is also valid YAML.
+
+<Note>
+  YAML is highly sensitive to indentation. Tabs are not allowed — use spaces consistently throughout your file. Incorrect indentation is the most common source of configuration errors in ESPHome.
+</Note>
+
+## Standard YAML Features
+
+ESPHome supports the full YAML 1.1 specification. The following features are used most often in ESPHome configurations.
+
+### Comments
+
+Any text after a `#` symbol is treated as a comment and ignored by the parser. If you need a literal `#` character inside a value, wrap the value in quotes.
+
+```yaml
+# This is a full-line comment
+esphome:
+  name: my-device  # inline comment
+  friendly_name: "Color #1 Sensor"  # # inside quotes is fine
+```
+
+### Scalars
+
+A scalar is any single value: a string, number, boolean, or null. Unquoted sequences that are not valid numbers or booleans are treated as strings (e.g., `23times`). Standard escape sequences such as `\n` are interpreted inside double-quoted strings only.
+
+**Boolean values** accept `true` / `false` (case-insensitive). ESPHome also maps several additional strings:
+
+| Evaluates to `true` | Evaluates to `false` |
+|---------------------|----------------------|
+| `yes`, `on`, `enable` | `no`, `off`, `disable` |
+
+**Numeric auto-conversion:** In most places where ESPHome expects a number, you can write the value as a quoted string and it will be automatically converted.
+
+```yaml
+esp8266:
+  board: esp8285        # string scalar
+  restore_from_flash: true  # boolean
+
+web_server:
+  port: 80              # integer
+
+sensor:
+  - platform: adc
+    update_interval: 1.5s   # float string — auto-converted
+```
+
+### Sequences
+
+A sequence is an ordered list. ESPHome supports both block style (one item per line with a `-` prefix) and flow style (comma-separated inside `[ ]`).
+
+```yaml
+# Flow style — concise for simple lists
+data_pins: [48, 47, 39, 40]
+
+# Block style — preferred for complex items
+sensor:
+  - platform: adc
+    name: "Voltage Rail A"
+    pin: GPIO32
+
+  - platform: adc
+    name: "Voltage Rail B"
+    pin: GPIO33
+```
+
+<Note>
+  When a sequence item is itself a mapping (the common case for component lists), the keys sit at the **same indent level** as the `-`. When a sequence item is a key whose value is a mapping, the next level must be indented further.
+
+  ```yaml
+  # Correct — item IS a mapping
+  - platform: gpio
+    name: "Button"
+
+  # Correct — item has a key whose value is a mapping
+  - label:
+      text: "Temperature"
+  ```
+</Note>
+
+### Mappings
+
+A mapping is a set of key-value pairs (also called a dictionary). Keys must be unique within a single mapping. Values can be any YAML type — scalars, sequences, or nested mappings.
+
+```yaml
+sensor:
+  platform: adc
+  pin: GPIO32
+  name: "Room Temperature"
+  device_class: temperature
+  unit_of_measurement: "°C"
+  accuracy_decimals: 1
+  state_class: measurement
+```
+
+Flow style mappings using `{ key: value }` are also valid and useful for compact inline notation:
+
+```yaml
+substitutions: { device_name: my-esp32, board: esp32dev }
+```
+
+### Anchors, Aliases, and Merge Keys
+
+YAML anchors (`&name`) mark a block for reuse; aliases (`*name`) insert a copy of that block elsewhere. The merge key `<<: *name` merges an anchored mapping into another, with local keys taking precedence.
+
+```yaml
+sensor:
+  - &adc_defaults
+    platform: adc
+    device_class: temperature
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    state_class: measurement
+
+  - <<: *adc_defaults
+    name: "Channel A"
+    pin: GPIO32
+
+  - <<: *adc_defaults
+    name: "Channel B"
+    pin: GPIO33
+```
+
+Both sensors inherit `platform`, `device_class`, `unit_of_measurement`, `accuracy_decimals`, and `state_class` from the anchor, while each overrides `name` and `pin`.
+
+### Multi-line Strings
+
+YAML provides several ways to embed multi-line text. The two most useful styles in ESPHome are **block literal** (`|`) and **block folded** (`>`).
+
+| Style | Character | Newlines | Trailing newline |
+|-------|-----------|----------|-----------------|
+| Literal | `|` | Preserved | One newline added |
+| Literal strip | `\|-` | Preserved | Removed |
+| Folded | `>` | Collapsed to space | One newline added |
+| Folded strip | `>-` | Collapsed to space | Removed |
+
+The `|-` style (literal strip) is the most common choice inside ESPHome because it keeps internal newlines and removes the trailing newline:
+
+```yaml
+display:
+  - platform: waveshare_epaper
+    lambda: |-
+      it.print(0, 0, id(my_font), "Hello");
+      it.print(0, 20, id(my_font), "World");
+```
+
+Quoted strings may also span multiple lines. Leading whitespace on continuation lines is ignored and a blank line inserts a newline:
+
+```yaml
+sensor:
+  - platform: template
+    name: "Sensor
+           Name"   # Results in "Sensor Name"
+```
+
+---
+
+## ESPHome YAML Extensions
+
+ESPHome adds several non-standard tags and top-level keys on top of standard YAML.
+
+### Secrets — `!secret`
+
+The `!secret` tag pulls a value from a separate `secrets.yaml` file in the same directory. This lets you share configuration files without exposing passwords, API keys, or other sensitive values.
+
+```yaml
+# device.yaml
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret device_api_key
+```
+
+```yaml
+# secrets.yaml  ← keep this out of version control!
+wifi_ssid: "MyHomeNetwork"
+wifi_password: "hunter2"
+device_api_key: "uKh1234567890abcdefghijklmnopqrstuvwxyz="
+```
+
+<Warning>
+  **Never commit `secrets.yaml` to a public Git repository.** Add it to `.gitignore` immediately. The file must be a flat key-to-scalar mapping — nested values are not supported.
+</Warning>
+
+### Substitutions
+
+The `substitutions:` block lets you define named values that can be referenced anywhere in the configuration with `${name}` or `$name` syntax. Substitutions are expanded before validation, making them ideal for device-specific values in shared templates.
+
+```yaml
+substitutions:
+  device_name: living-room-sensor
+  update_interval: 30s
+  temp_offset: "-1.5"
+
+esphome:
+  name: ${device_name}
+
+sensor:
+  - platform: bme280_i2c
+    temperature:
+      name: "Temperature"
+      filters:
+        - offset: ${temp_offset}
+    update_interval: ${update_interval}
+```
+
+ESPHome supports [Jinja expressions](https://jinja.palletsprojects.com/en/stable/templates/#expressions) inside `${ }`, enabling arithmetic and conditional logic:
+
+```yaml
+substitutions:
+  native_width: 480
+  high_dpi: true
+
+display:
+  - platform: ili9xxx
+    dimensions:
+      width: ${native_width * 2 if high_dpi else native_width}
+```
+
+Substitutions can also be overridden from the command line with the `-s` flag:
+
+```bash
+esphome -s device_name kitchen-sensor run device.yaml
+```
+
+For full details, see the [Substitutions component docs](/guides/packages-substitutions).
+
+### `!include`
+
+The `!include` tag inserts the contents of another YAML file at the current position. Variables can be passed to the included file using `vars:`, and they take precedence over any global substitutions defined in the including file.
+
+<CodeGroup>
+```yaml Inline syntax
+binary_sensor:
+  - platform: gpio
+    id: button1
+    pin: GPIO0
+    on_multi_click: !include { file: on-multi-click.yaml, vars: { id: 1 } }
+```
+
+```yaml Multi-line syntax
+binary_sensor:
+  - platform: gpio
+    id: button2
+    pin: GPIO1
+    on_multi_click: !include
+      file: on-multi-click.yaml
+      vars:
+        id: 2
+```
+</CodeGroup>
+
+The filename itself may contain substitution expressions, allowing you to dynamically select which file is loaded:
+
+```yaml
+substitutions:
+  platform: esp32
+
+binary_sensor:
+  - platform: gpio
+    pin: GPIO0
+    on_multi_click: !include { file: on-multi-click-${platform}.yaml, vars: { id: 1 } }
+```
+
+### Packages
+
+The `packages:` feature merges one or more partial configurations into your main file. Values in the main configuration take precedence over values in the package. This is the recommended approach for sharing a common base configuration across many devices.
+
+```yaml
+packages:
+  base: !include common/base.yaml
+  wifi: !include common/wifi.yaml
+```
+
+See the [Packages component](/guides/packages-substitutions) for full usage details.
+
+### Hidden Items
+
+Any top-level key that starts with a `.` is silently ignored by ESPHome. This is useful for defining YAML anchors that should not appear in the final configuration:
+
+```yaml
+.slider_defaults: &slider_defaults
+  optimistic: true
+  min_value: 0
+  max_value: 100
+  step: 1
+
+number:
+  - platform: template
+    <<: *slider_defaults
+    id: brightness_level
+    name: "Brightness"
+
+  - platform: template
+    <<: *slider_defaults
+    id: speed_level
+    name: "Fan Speed"
+```
+
+### Lambdas
+
+ESPHome allows embedding C++ code using the `!lambda` tag. Lambdas are evaluated at runtime and provide dynamic values or logic not expressible in YAML. See [Templates](/reference/lambda-templates) for details.
+
+```yaml
+sensor:
+  - platform: template
+    name: "Computed Value"
+    lambda: |-
+      return id(raw_sensor).state * 1.8 + 32;
+    update_interval: 5s
+```
+
+---
+
+## See Also
+
+- [Substitutions](/guides/packages-substitutions)
+- [Packages](/guides/packages-substitutions)
+- [Configuration Types](/guides/configuration-types/)
+- [YAML Official Specification](https://yaml.org/)

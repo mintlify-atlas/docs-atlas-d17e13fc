@@ -1,0 +1,287 @@
+---
+title: "Fan Component: Control Variable-Speed Fans"
+sidebarTitle: "Fan"
+description: "Control fans with ESPHome: on/off, speed levels, oscillation, direction, and preset modes. Exposes as a fan entity in Home Assistant."
+---
+
+ESPHome's `fan` domain exposes fan hardware as a Home Assistant `fan` entity. Fans can be switched on/off, set to a specific speed level, set to oscillate, reversed in direction, or placed in a named preset mode. Whether you're controlling a simple relay-switched ceiling fan, a PWM-driven server fan, or a multi-speed bathroom exhaust fan, the `fan` domain provides the right abstraction.
+
+## Minimal Example
+
+```yaml
+output:
+  - platform: ledc
+    id: fan_pwm
+    pin: GPIO19
+    frequency: 25000Hz
+
+fan:
+  - platform: speed
+    output: fan_pwm
+    name: "Office Fan"
+    speed_count: 4
+    restore_mode: RESTORE_DEFAULT_OFF
+```
+
+## Base Fan Configuration
+
+All fan platforms inherit these configuration variables.
+
+<ParamField path="id" type="string" optional>
+  Manually specify the ID for code generation. At least one of `id` and `name` must be specified.
+</ParamField>
+
+<ParamField path="name" type="string" optional>
+  The name of the fan in Home Assistant. Set to `None` to inherit the device's `friendly_name`.
+</ParamField>
+
+<ParamField path="icon" type="icon" optional>
+  Manually override the MDI icon shown in the frontend.
+</ParamField>
+
+<ParamField path="restore_mode" type="enum" optional>
+  How the fan restores its state on boot:
+  - `ALWAYS_OFF` (default) — always start off.
+  - `ALWAYS_ON` — always start on.
+  - `RESTORE_DEFAULT_OFF` — restore previous state, default to off.
+  - `RESTORE_DEFAULT_ON` — restore previous state, default to on.
+  - `RESTORE_INVERTED_DEFAULT_OFF` / `RESTORE_INVERTED_DEFAULT_ON` — restore inverted state.
+  - `NO_RESTORE` — do not restore any state.
+</ParamField>
+
+<ParamField path="internal" type="boolean" optional>
+  If `true`, the fan is not exposed to the frontend. Defaults to `false`.
+</ParamField>
+
+<ParamField path="disabled_by_default" type="boolean" optional>
+  If `true`, the entity is hidden in Home Assistant until manually enabled. Defaults to `false`.
+</ParamField>
+
+<ParamField path="entity_category" type="string" optional>
+  The entity category (`config`, `diagnostic`). Set to `""` to remove the default.
+</ParamField>
+
+---
+
+## Fan Actions
+
+### `fan.turn_on`
+
+Turn the fan on, optionally setting speed, oscillation, and direction.
+
+```yaml
+on_...:
+  - fan.turn_on:
+      id: ceiling_fan
+      speed: 2
+      oscillating: true
+      direction: forward
+  # Shorthand:
+  - fan.turn_on: ceiling_fan
+```
+
+<ParamField path="id" type="ID" required>The fan to control.</ParamField>
+<ParamField path="speed" type="int (templatable)" optional>
+  Speed level (1 to `speed_count`). Defaults to not changing the current speed.
+</ParamField>
+<ParamField path="oscillating" type="boolean (templatable)" optional>
+  Enable or disable oscillation. Defaults to not changing the current state.
+</ParamField>
+<ParamField path="direction" type="string (templatable)" optional>
+  `forward` or `reverse`. Defaults to not changing the current direction.
+</ParamField>
+
+### `fan.turn_off`
+
+```yaml
+on_...:
+  - fan.turn_off: ceiling_fan
+```
+
+### `fan.toggle`
+
+```yaml
+on_...:
+  - fan.toggle: ceiling_fan
+```
+
+### `fan.cycle_speed`
+
+Cycle through speed levels. If at maximum speed, turns the fan off (unless `off_speed_cycle: false`).
+
+```yaml
+on_...:
+  - fan.cycle_speed:
+      id: ceiling_fan
+      off_speed_cycle: true  # default
+```
+
+### `fan.is_on` / `fan.is_off` Condition
+
+```yaml
+on_...:
+  if:
+    condition:
+      fan.is_on: ceiling_fan
+    then:
+      - fan.turn_off: ceiling_fan
+```
+
+---
+
+## Fan Triggers
+
+```yaml
+fan:
+  - platform: speed
+    output: fan_pwm
+    name: "Server Fan"
+    on_turn_on:
+      - logger.log: "Fan ON"
+    on_turn_off:
+      - logger.log: "Fan OFF"
+    on_state:
+      - logger.log:
+          format: "Fan speed: %d"
+          args: [x->speed]
+    on_speed_set:
+      - logger.log:
+          format: "Speed changed to %d"
+          args: [x]
+    on_direction_set:
+      - logger.log:
+          format: "Direction: %s"
+          args: ['x == FanDirection::FORWARD ? "FORWARD" : "REVERSE"']
+    on_oscillating_set:
+      - logger.log:
+          format: "Oscillating: %s"
+          args: [ONOFF(x)]
+    on_preset_set:
+      - logger.log:
+          format: "Preset: %s"
+          args: [x.c_str()]
+```
+
+---
+
+## Lambda Calls
+
+```cpp
+// Read state
+if (id(my_fan).state) { /* ON */ }
+int spd = id(my_fan).speed;
+bool osc = id(my_fan).oscillating;
+if (id(my_fan).direction == FanDirection::FORWARD) { /* ... */ }
+
+// Control
+auto call = id(my_fan).turn_on();
+call.set_speed(3);
+call.set_oscillating(true);
+call.set_direction(FanDirection::REVERSE);
+call.perform();
+
+// Preset mode
+auto call = id(my_fan).turn_on();
+call.set_preset_mode("auto");
+call.perform();
+
+// Toggle
+id(my_fan).toggle().perform();
+```
+
+---
+
+## Fan Platforms
+
+<CardGroup cols={2}>
+  <Card title="Binary Fan" icon="toggle-right">
+    Simple on/off fan using a single binary output (relay). No speed control.
+  </Card>
+  <Card title="Speed Fan" icon="activity">
+    Variable-speed fan driven by a float (PWM) output. Supports configurable speed levels.
+  </Card>
+</CardGroup>
+
+---
+
+## Advanced Examples
+
+### Multi-Speed Fan with Button Cycling
+
+```yaml
+output:
+  - platform: ledc
+    id: fan_output
+    pin: GPIO19
+    frequency: 25000Hz
+
+fan:
+  - platform: speed
+    output: fan_output
+    name: "Ceiling Fan"
+    speed_count: 3
+    id: ceiling_fan
+
+binary_sensor:
+  - platform: gpio
+    pin: GPIO0
+    name: "Fan Button"
+    on_click:
+      min_length: 50ms
+      max_length: 350ms
+      then:
+        - fan.cycle_speed: ceiling_fan
+```
+
+### Fan with Oscillation and Direction Control
+
+```yaml
+output:
+  - platform: gpio
+    pin: GPIO5
+    id: fan_relay
+
+  - platform: gpio
+    pin: GPIO6
+    id: oscillation_relay
+
+  - platform: gpio
+    pin: GPIO7
+    id: direction_relay
+
+fan:
+  - platform: binary
+    output: fan_relay
+    oscillation_output: oscillation_relay
+    direction_output: direction_relay
+    name: "Tower Fan"
+```
+
+### Thermostat-Controlled Fan with Preset Modes
+
+```yaml
+fan:
+  - platform: speed
+    output: fan_pwm
+    name: "HVAC Fan"
+    speed_count: 10
+    preset_modes:
+      - "auto"
+      - "sleep"
+      - "turbo"
+    on_preset_set:
+      - lambda: |-
+          if (x == "auto") {
+            auto c = id(my_fan).turn_on();
+            c.set_speed(5);
+            c.perform();
+          } else if (x == "sleep") {
+            auto c = id(my_fan).turn_on();
+            c.set_speed(2);
+            c.perform();
+          } else if (x == "turbo") {
+            auto c = id(my_fan).turn_on();
+            c.set_speed(10);
+            c.perform();
+          }
+```

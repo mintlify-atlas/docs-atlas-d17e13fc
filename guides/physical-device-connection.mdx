@@ -1,0 +1,183 @@
+---
+title: "Connecting Your ESP Device for First-Time Flashing"
+sidebarTitle: "Device Connection"
+description: "How to connect ESP32 and ESP8266 devices via USB for first-time flashing: drivers, boot modes, common boards, and web installer option."
+---
+
+The most involved part of setting up a new ESPHome device is the very first firmware installation, which requires a physical USB connection between your computer and the ESP chip. Once ESPHome is running on a device you can use [OTA updates](/components/ota/) to push all future firmware changes wirelessly — so this process only needs to happen once per device.
+
+<Warning>
+  **Never connect a device to mains electricity while following this guide.** If your device is open and wired directly to a wall outlet, a single accidental touch can be fatal. A separate "wall wart" or power brick is safe, but direct mains connections are not. **You are solely responsible for your own safety.** Stop immediately if something feels wrong.
+</Warning>
+
+---
+
+## Quick Option: Web Installer
+
+If your device has a USB port built in and you are using a Chromium-based browser (Chrome, Edge, or Opera), you can flash ESPHome without installing any software at all.
+
+Visit **[web.esphome.io](https://web.esphome.io)**, connect your device with a USB data cable, and follow the on-screen steps. The web installer handles driver detection, flash mode, and firmware upload automatically.
+
+<Note>
+  The web installer requires a **data** USB cable. Charging-only cables lack the data wires and will not work. If the browser cannot detect your device, try a different cable first.
+</Note>
+
+---
+
+## USB-to-Serial Drivers
+
+Your computer communicates with the ESP chip through a USB-to-serial (UART) bridge chip. If your device is not recognized as a serial port after plugging in, you need to install the driver for that bridge chip. The chip model is usually printed on the component closest to the USB port.
+
+<CardGroup cols={2}>
+  <Card title="CH34x (CH340 / CH341)" icon="microchip">
+    The most reliable and lowest-cost option. Recommended for new purchases.
+
+    **Driver:** [nodemcu/nodemcu-devkit drivers](https://github.com/nodemcu/nodemcu-devkit/tree/master/Drivers)
+
+    Modern Linux and macOS include this driver by default.
+  </Card>
+  <Card title="CP2102 / CP210x" icon="microchip">
+    Common on official Espressif development boards. May require an external 3.3 V supply when used with some target boards.
+
+    **Driver:** [Silicon Labs VCP drivers](https://www.silabs.com/products/development-tools/software/usb-to-uart-bridge-vcp-drivers)
+  </Card>
+  <Card title="FTDI (FT232RL etc.)" icon="microchip">
+    High-quality adapters widely used in industry. Generally plug-and-play on modern operating systems.
+
+    **Driver:** [FTDI VCP drivers](https://ftdichip.com/drivers/vcp-drivers/)
+  </Card>
+  <Card title="PL2303" icon="microchip">
+    Older adapter commonly bundled with inexpensive hardware kits.
+
+    **Driver:** [PL2303 datasheet / driver notes](https://cdn-shop.adafruit.com/datasheets/PL2303HX.pdf)
+
+    An external 3.3 V supply is often required.
+  </Card>
+</CardGroup>
+
+After installing the driver, the device should appear as:
+- **Windows:** `COM3`, `COM4`, etc. (check Device Manager)
+- **Linux:** `/dev/ttyUSB0`, `/dev/ttyACM0`, etc.
+- **macOS:** `/dev/tty.usbserial-*` or `/dev/tty.wchusbserial*`
+
+---
+
+## Required Electrical Connections
+
+When your device does **not** have a built-in USB port you need five connections between your USB-to-serial adapter and the ESP module:
+
+| Adapter pin | ESP pin | Notes |
+|---|---|---|
+| `3.3V` | `3.3V` | **Never use 5 V — it will destroy the ESP** |
+| `GND` | `GND` | Must share ground with the adapter |
+| `TX` | `RX` | Cross-connected: adapter TX → ESP RX |
+| `RX` | `TX` | Cross-connected: adapter RX → ESP TX |
+| `GND` | `IO0` / `GPIO0` | Only during boot — used to enter flash mode |
+
+<Warning>
+  Some adapters have a voltage switch for data pins (`3.3V` / `5V`) but still output `5V` on the `VCC` power pin regardless of the switch position. Always verify the `VCC` voltage with a multimeter before connecting the target device. Applying `5V` to an ESP's power rail will irreparably damage it.
+</Warning>
+
+If `TX` and `RX` are swapped the device will appear to connect but no data will transfer. If programming fails, try reversing those two wires.
+
+---
+
+## Entering Flash / Boot Mode
+
+The ESP chip must be in **programming mode** (also called flash mode or download mode) before new firmware can be uploaded. This is triggered by pulling `GPIO0` low (`GND`) at the moment the chip powers on.
+
+<Steps>
+  <Step title="Disconnect power">
+    Unplug the USB cable (or power supply) from your computer to cut power to the ESP.
+  </Step>
+  <Step title="Hold GPIO0 low">
+    Press and hold the **BOOT** button on the board (it is connected to GPIO0), or bridge GPIO0 to GND with a jumper wire.
+  </Step>
+  <Step title="Reconnect power">
+    Plug the USB cable back in while keeping BOOT held. The chip will power on and sample GPIO0 low, entering flash mode.
+  </Step>
+  <Step title="Release GPIO0">
+    After a few seconds, release the BOOT button (or remove the jumper wire). The chip stays in flash mode until it is reset or power-cycled. If you cannot reach the button during flashing, leaving the wire bridged for the entire erase-and-upload process is harmless — just remove it afterwards so the device boots normally.
+  </Step>
+  <Step title="Upload firmware">
+    Run `esphome run your-device.yaml` or use the ESPHome dashboard to compile and flash. If you are erasing first, you may need to power-cycle (with GPIO0 still held low) before uploading.
+  </Step>
+</Steps>
+
+---
+
+## Board-Specific Connection Situations
+
+Different physical form factors require different approaches.
+
+### Development Board with Built-in USB
+
+<Info>
+  Examples: NodeMCU ESP8266, ESP32 DevKitC, Wemos D1 Mini, Seeed XIAO ESP32.
+</Info>
+
+These boards include a USB-to-serial bridge chip on the PCB. Connect with a USB data cable — no external adapter needed. The BOOT and RESET buttons are usually on the board. Some newer boards (ESP32-S3, ESP32-C3 with native USB) may not need the BOOT procedure at all.
+
+### Pre-Soldered Programming Header
+
+A row of pins is already soldered on the board exposing `3.3V`, `GND`, `TX`, `RX`, and `IO0`. Use jumper wires and a USB-to-serial adapter — no soldering required.
+
+### Unpopulated Programming Header
+
+The pads or through-holes are present but no header pins are installed. In many cases you can press male jumper wire ends directly into the holes and hold them steady while flashing. No soldering required, though it takes a steady hand.
+
+### Solder-Filled / Blank Pads
+
+If the programming pads are filled with solder or are surface-mount only, you will need to solder breakaway header pins or fine gauge wires before you can attach the adapter.
+
+### Module Only (No PCB Header)
+
+ESP modules (e.g., ESP-12E, ESP-WROOM-32) without a carrier board require soldering short wires directly to the module pads. Look up the module's pinout — the [Tasmota pinout reference](https://tasmota.github.io/docs/Pinouts/) is a useful resource.
+
+### Bare Chip (Advanced)
+
+Directly programming a surface-mount ESP IC is an advanced task. Your options are: find a test clip that reaches the programming pads, use microsoldering to attach wires, or check whether the device supports a vendor OTA conversion tool.
+
+---
+
+## Required Materials
+
+Depending on your board type you may need some or all of the following:
+
+| Item | Purpose | Approx. cost |
+|---|---|---|
+| USB data cable (micro-USB / USB-C) | Connect development boards with built-in USB | $3–$10 |
+| USB-to-serial adapter (3.3 V) | Connect boards without built-in USB | $3–$10 |
+| Jumper wires (male–female) | Connect adapter to programming header | $3–$8 / pack |
+| Breakaway pin headers | Solder to unpopulated headers | $3–$8 / pack |
+| Wire strippers / cutters | Prepare wires for soldering | $5–$15 |
+| Soldering iron (temperature-controlled) | Attach headers or wires | $60–$120 |
+| Electronics solder (rosin core) | Bond wires and pins | $8–$12 |
+| Electronics flux (optional) | Improve solder adhesion | $8–$12 |
+
+<Tip>
+  Read the full guide before buying anything — your board may only need a USB cable and nothing else.
+</Tip>
+
+---
+
+## Common Issues and Fixes
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Device not detected as serial port | Missing or wrong driver | Install the correct driver for your bridge chip (see above) |
+| "Port not found" error | Cable is charge-only | Replace with a USB **data** cable |
+| Upload fails with no output | RX/TX swapped | Swap the TX and RX wires |
+| Upload starts but fails mid-way | Insufficient power | Use a powered USB hub or external 3.3 V supply |
+| Device boots normally instead of entering flash mode | GPIO0 not held low at boot | Power-cycle while holding BOOT / GPIO0 low |
+| Linux: "Permission denied" on `/dev/ttyUSB0` | User not in `dialout` group | Run `sudo usermod -aG dialout $USER` and log out/in |
+
+---
+
+## See Also
+
+- [OTA Updates](/components/ota/)
+- [ESPHome Web Installer](https://web.esphome.io)
+- [Getting Started — Command Line](/guides/getting-started-cli)
+- [Getting Started with Home Assistant](/guides/getting-started-ha)
+- Using a Dev Board as a Flasher

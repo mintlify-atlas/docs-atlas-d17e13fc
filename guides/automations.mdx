@@ -1,0 +1,414 @@
+---
+title: "Automations, Triggers, and Actions in ESPHome"
+sidebarTitle: "Automations"
+description: "Build ESPHome automations using triggers and actions. Covers on_boot, on_shutdown, scripts, intervals, globals, and Lambda C++ expressions."
+---
+
+Automations are the heart of ESPHome — they let your device respond to its environment entirely on-device, without depending on a network connection or a cloud service. Every automation is a pair: a **trigger** (the event that fires it) and one or more **actions** (what the device does in response). This page walks through the full automation system, from simple button presses to reusable scripts, recurring intervals, shared global variables, and Lambda C++ templates.
+
+## How Automations Work
+
+Every automation follows the same pattern: a trigger fires, then a list of actions executes sequentially.
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    pin: GPIO4
+    name: "Hallway Button"
+    id: hallway_btn
+    on_press:           # ← trigger
+      then:
+        - switch.toggle: hallway_light   # ← action
+```
+
+The `on_press` attribute is the **trigger**. The `then:` block holds the **actions**. Actions run in order — the next action does not start until the previous one finishes (or, for async actions like `delay`, until the delay elapses).
+
+You can chain as many actions as you like:
+
+```yaml
+on_press:
+  then:
+    - switch.turn_on: relay_1
+    - delay: 2s
+    - switch.turn_off: relay_1
+```
+
+## Common Triggers
+
+### `on_boot` and `on_shutdown`
+
+Run actions once when the device boots up or cleanly shuts down. Useful for initialising outputs or publishing a startup message.
+
+```yaml
+esphome:
+  name: my-device
+  on_boot:
+    priority: 600          # higher = earlier in boot sequence
+    then:
+      - logger.log: "Device is booting!"
+      - light.turn_off: status_led
+
+  on_shutdown:
+    then:
+      - logger.log: "Device is shutting down."
+```
+
+<Note>
+`on_boot` fires every time the ESP restarts — including after an OTA update or a watchdog reset. Use `priority` (range –100 to 600) to order multiple `on_boot` blocks relative to each other.
+</Note>
+
+### `on_loop`
+
+Runs on every main-loop iteration (~millisecond cadence). Avoid heavy work here; prefer `interval:` for periodic tasks.
+
+```yaml
+esphome:
+  on_loop:
+    then:
+      - lambda: |-
+          if (id(my_sensor).state > 80.0) {
+            id(fan).turn_on();
+          }
+```
+
+### Sensor Triggers
+
+Sensors expose several triggers you can hook into:
+
+```yaml
+sensor:
+  - platform: dht
+    humidity:
+      name: "Room Humidity"
+      on_value_range:
+        - above: 70.0
+          then:
+            - switch.turn_on: dehumidifier
+        - below: 50.0
+          then:
+            - switch.turn_off: dehumidifier
+      on_value:
+        then:
+          - logger.log:
+              format: "Humidity changed to %.1f%%"
+              args: ["x"]
+```
+
+| Trigger | Fires when… |
+|---|---|
+| `on_value` | Sensor publishes any new reading |
+| `on_value_range` | Reading enters an `above`/`below` window |
+| `on_raw_value` | Raw (unfiltered) value is received |
+
+### Button / Binary Sensor Triggers
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    pin: GPIO0
+    name: "Push Button"
+    on_press:
+      then:
+        - light.toggle: bedroom_light
+    on_release:
+      then:
+        - logger.log: "Button released"
+    on_click:
+      min_length: 50ms
+      max_length: 350ms
+      then:
+        - light.toggle: bedroom_light
+    on_double_click:
+      then:
+        - scene.activate: movie_scene
+```
+
+## Common Actions
+
+### `delay`
+
+Pauses the action list for a fixed or computed duration. The rest of the device continues running normally during the delay.
+
+```yaml
+on_press:
+  then:
+    - switch.turn_on: relay_1
+    - delay: 5s
+    - switch.turn_off: relay_1
+
+    # Lambda delay (in milliseconds):
+    - delay: !lambda "return id(sensor_value).state * 100;"
+```
+
+### `if`
+
+Branches based on a condition. Both `then:` and `else:` are optional.
+
+```yaml
+on_...:
+  then:
+    - if:
+        condition:
+          lambda: 'return id(temperature).state > 25.0;'
+        then:
+          - fan.turn_on: ceiling_fan
+        else:
+          - fan.turn_off: ceiling_fan
+```
+
+You can also use built-in conditions instead of lambdas:
+
+```yaml
+- if:
+    condition:
+      binary_sensor.is_on: motion_sensor
+    then:
+      - light.turn_on: hallway_light
+```
+
+### `while`
+
+Loops until a condition becomes false:
+
+```yaml
+on_...:
+  then:
+    - while:
+        condition:
+          binary_sensor.is_on: door_sensor
+        then:
+          - light.toggle: warning_light
+          - delay: 500ms
+```
+
+### `repeat`
+
+Executes a block a fixed number of times. The loop counter is available as `iteration` inside lambdas.
+
+```yaml
+on_...:
+  then:
+    - repeat:
+        count: 3
+        then:
+          - light.turn_on: status_led
+          - delay: 200ms
+          - light.turn_off: status_led
+          - delay: 200ms
+```
+
+### `wait_until`
+
+Suspends the action list until a condition becomes true, with an optional timeout:
+
+```yaml
+on_...:
+  then:
+    - logger.log: "Waiting for Wi-Fi..."
+    - wait_until:
+        condition:
+          wifi.connected:
+        timeout: 30s
+    - logger.log: "Wi-Fi is ready (or timed out)"
+```
+
+### `lambda`
+
+Execute arbitrary C++ code inline:
+
+```yaml
+on_...:
+  then:
+    - lambda: |-
+        id(my_counter) += 1;
+        ESP_LOGI("main", "Counter is now %d", id(my_counter));
+```
+
+## Scripts
+
+Scripts let you define a named, reusable block of actions and call it from multiple places. They also support **execution modes** that control what happens when the script is called again while already running.
+
+```yaml
+script:
+  - id: blink_alert
+    mode: restart       # restart from top if called again
+    then:
+      - repeat:
+          count: 5
+          then:
+            - light.turn_on: alert_led
+            - delay: 200ms
+            - light.turn_off: alert_led
+            - delay: 200ms
+```
+
+| Mode | Behavior |
+|---|---|
+| `single` | Ignore new calls while already running (default) |
+| `restart` | Stop current run and restart from the top |
+| `queued` | Queue new calls; run them after the current one finishes (max 5 by default) |
+| `parallel` | Run new instances alongside existing ones (unlimited by default) |
+
+**Calling a script:**
+
+```yaml
+on_press:
+  then:
+    - script.execute: blink_alert
+
+# Stop it early:
+on_release:
+  then:
+    - script.stop: blink_alert
+```
+
+**Scripts with parameters:**
+
+```yaml
+script:
+  - id: set_brightness
+    parameters:
+      level: float
+    then:
+      - light.turn_on:
+          id: main_light
+          brightness: !lambda return level;
+
+on_press:
+  then:
+    - script.execute:
+        id: set_brightness
+        level: 0.75
+```
+
+<Tip>
+Combine `mode: restart` with a `delay` to build a sliding-window timer. Every new button press resets the countdown — great for auto-off lights.
+</Tip>
+
+## Interval Component
+
+The `interval:` component runs a block of actions repeatedly on a fixed schedule. It is lighter-weight than `time.on_time` and needs no real-time clock.
+
+```yaml
+interval:
+  - interval: 30s
+    then:
+      - component.update: my_sensor
+
+  - interval: 1min
+    startup_delay: 10s    # wait 10 s after boot before first run
+    then:
+      - logger.log: "One minute has passed"
+      - switch.toggle: heartbeat_led
+```
+
+## Global Variables
+
+Globals store values that persist across automation runs and can be read or written from any lambda. They are declared at the top level and referenced by ID.
+
+```yaml
+globals:
+  - id: boot_count
+    type: int
+    restore_value: yes        # save to flash, survives reboot
+    initial_value: '0'
+
+  - id: last_motion_time
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: device_label
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 32
+    initial_value: '"Kitchen Sensor"'
+```
+
+**Reading and writing globals in a lambda:**
+
+```yaml
+on_boot:
+  then:
+    - lambda: |-
+        id(boot_count) += 1;
+        ESP_LOGI("main", "Boot #%d", id(boot_count));
+```
+
+**Using the `globals.set` action (no C++ needed):**
+
+```yaml
+on_press:
+  then:
+    - globals.set:
+        id: boot_count
+        value: '0'
+```
+
+<Note>
+Unlike sensors, globals do not use `.state` — you access them directly as `id(my_global)`. Wrapping `initial_value` in quotes is required because ESPHome passes it verbatim into C++.
+</Note>
+
+## Lambda Templates (C++ Inside YAML)
+
+Lambdas let you write C++ expressions directly in your YAML configuration. They are introduced with the `!lambda` tag (or implied in `lambda:` keys).
+
+```yaml
+binary_sensor:
+  - platform: template
+    name: "High Temperature Warning"
+    lambda: |-
+      return id(room_temp).state > 30.0;
+```
+
+**Accessing component state:**
+
+| Expression | What it returns |
+|---|---|
+| `id(my_sensor).state` | Current float value of a sensor |
+| `id(my_binary).state` | `true` / `false` for a binary sensor |
+| `id(my_switch).state` | `true` / `false` for a switch |
+| `id(my_text).state` | `std::string` of a text sensor |
+
+**Templating action parameters:**
+
+```yaml
+on_press:
+  then:
+    - light.turn_on:
+        id: accent_light
+        brightness: !lambda |-
+          // Map sensor (0–100) to brightness (0.0–1.0)
+          return id(lux_sensor).state / 100.0;
+```
+
+**Persisting state across lambda calls with `static`:**
+
+```yaml
+on_value:
+  then:
+    - lambda: |-
+        static int call_count = 0;
+        call_count++;
+        ESP_LOGD("sensor", "Called %d times", call_count);
+```
+
+<Warning>
+ESPHome does not validate lambda syntax before compiling. If your C++ is wrong, you'll see a compilation error. Check the generated source at `<NODE_NAME>/src/main.cpp` for the exact error location.
+</Warning>
+
+## Automations Without a Network
+
+All automations run locally on the microcontroller. Your device will keep responding to buttons, sensors, and timers even with no Wi-Fi connection, no MQTT broker, and no Home Assistant instance reachable.
+
+<Note>
+ESPHome will reboot automatically if it cannot reach its API endpoint for an extended period (default: 15 minutes). You can adjust this with the `reboot_timeout` option on the `api:`, `wifi:`, or `mqtt:` component if you need offline-only operation.
+</Note>
+
+## See Also
+
+- [Actions, Triggers, and Conditions (full reference)](/guides/automations)
+- [Lambda Templates](/reference/lambda-templates)
+- [Script Component](/guides/automations)
+- [Interval Component](/guides/automations)
+- [Global Variables](/guides/automations)

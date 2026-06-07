@@ -1,0 +1,428 @@
+---
+title: "ESPHome Web Server REST and SSE API Reference"
+sidebarTitle: "Web API"
+description: "ESPHome Web Server API: SSE real-time event stream at /events, REST endpoints for reading states and sending commands to each entity type."
+---
+
+The ESPHome web server exposes two complementary APIs on your device's IP address: a real-time Server-Sent Events (SSE) stream at `/events` and a conventional REST API for reading states and issuing commands. Both APIs are enabled automatically when you add the [`web_server:`](/components/web-server) component to your configuration — no extra setup is required beyond turning it on.
+
+<Note>
+  The web server is intentionally limited to viewing and controlling entity states. It does not and will not support changing device configuration (e.g., WiFi credentials or firmware settings), as that would require significantly more flash and RAM.
+</Note>
+
+To navigate to the built-in web frontend, open your browser at `http://<device-ip>/` or use the mDNS hostname `http://<name>.local/`. For a device named `livingroom`, that is `http://livingroom.local/`.
+
+---
+
+## Enabling the Web Server
+
+Add the `web_server:` block to your ESPHome YAML:
+
+```yaml
+web_server:
+  port: 80
+```
+
+All REST and SSE endpoints described on this page become available immediately after flashing.
+
+---
+
+## Event Source API
+
+The SSE endpoint at `/events` delivers real-time state updates using the [EventSource](https://developer.mozilla.org/en-US/docs/Web/API/EventSource) protocol (also known as Server-Sent Events). Connect to it from any browser, Node.js app, or Python script to receive a continuous stream of device events without polling.
+
+### Event Types
+
+There are three event types:
+
+| Type | Purpose |
+|------|---------|
+| `ping` | Sent periodically to keep the connection alive. No payload. |
+| `state` | Sent whenever a component's state changes. Contains a JSON payload. |
+| `log` | Sent on every firmware log message. Used by the built-in web frontend. |
+
+When a client first connects, the server replays the current state of **all** entities so the client immediately has a consistent snapshot.
+
+### State Event Payload
+
+Every `state` event carries a JSON object with at minimum the following identifier fields:
+
+| Field | Description |
+|-------|-------------|
+| `id` | Legacy identifier in `domain-object_id` format (e.g., `sensor-temperature`). **In ESPHome 2026.8.0 this field switches to the new format and `name_id` is removed.** |
+| `name_id` | **Temporary field (removed in 2026.8.0).** New identifier format: `domain/entity_name` (e.g., `sensor/Temperature`) or `domain/device_name/entity_name` for sub-device entities. |
+| `state` | Text representation of the current state (e.g., `ON`, `21.4 °C`). |
+
+<Warning>
+  Third-party integrations **must** prefer `name_id` over `id` today to get the new ID format, falling back to `id` for compatibility with older firmware. After ESPHome 2026.8.0, `id` will carry the new format and `name_id` will be removed. Plan your migration accordingly.
+</Warning>
+
+### JavaScript Example
+
+<Tabs>
+  <Tab title="Browser / JavaScript">
+    ```javascript
+    const evtSource = new EventSource("http://livingroom.local/events");
+
+    evtSource.addEventListener("state", (event) => {
+      const data = JSON.parse(event.data);
+      // Prefer name_id for forward compatibility
+      const entityId = data.name_id ?? data.id;
+      console.log(`${entityId}: ${data.state}`);
+    });
+
+    evtSource.addEventListener("ping", () => {
+      console.log("Connection alive");
+    });
+
+    evtSource.onerror = () => {
+      console.error("SSE connection error");
+    };
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import sseclient
+    import requests
+
+    url = "http://livingroom.local/events"
+    response = requests.get(url, stream=True)
+    client = sseclient.SSEClient(response)
+
+    for event in client.events():
+        if event.event == "state":
+            import json
+            data = json.loads(event.data)
+            entity_id = data.get("name_id") or data.get("id")
+            print(f"{entity_id}: {data['state']}")
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    // npm install eventsource
+    const EventSource = require("eventsource");
+
+    const es = new EventSource("http://livingroom.local/events");
+
+    es.addEventListener("state", (e) => {
+      const data = JSON.parse(e.data);
+      const id = data.name_id ?? data.id;
+      console.log(id, data.state);
+    });
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## REST API
+
+The REST API follows the URL schema:
+
+```
+/<domain>/<entity_name>[/<action>?<param>=<value>]
+```
+
+For entities on sub-devices:
+
+```
+/<domain>/<device_name>/<entity_name>[/<action>]
+```
+
+- **domain** — the component type: `sensor`, `switch`, `light`, `cover`, `button`, `number`, `select`, `fan`, `binary_sensor`, `alarm_control_panel`
+- **entity_name** — the `name:` value exactly as configured in YAML, including spaces and UTF-8 characters
+- **action** — `turn_on`, `turn_off`, `toggle`, `set`, `press`, etc.
+
+### URL Format and HTTP Methods
+
+| Segments | GET | POST |
+|----------|-----|------|
+| 2: `/{domain}/{entity}` | Returns entity state | N/A |
+| 3: `/{domain}/{X}/{Y}` | Sub-device state (`X`=device, `Y`=entity) | Main device action (`X`=entity, `Y`=action) |
+| 4: `/{domain}/{device}/{entity}/{action}` | Invalid | Sub-device action |
+
+<Note>
+  The legacy URL format using `object_id` (lowercase with underscores, e.g., `/sensor/temperature_sensor`) is still supported but deprecated and will be removed in ESPHome 2026.7.0.
+</Note>
+
+---
+
+### Sensor
+
+Sensors are read-only — only GET is supported.
+
+**GET** `/sensor/<entity_name>`
+
+```bash
+curl http://livingroom.local/sensor/Outside%20Temperature
+```
+
+```json
+{
+  "id": "sensor/Outside Temperature",
+  "state": "19.8 °C",
+  "value": 19.76666
+}
+```
+
+Add `?detail=all` to include extended information such as `name` and `device`:
+
+```bash
+curl "http://livingroom.local/sensor/Garage/Temperature?detail=all"
+```
+
+```json
+{
+  "id": "sensor/Garage/Temperature",
+  "name": "Temperature",
+  "device": "Garage",
+  "state": "15.2 °C",
+  "value": 15.23
+}
+```
+
+---
+
+### Binary Sensor
+
+Binary sensors are also read-only.
+
+**GET** `/binary_sensor/<entity_name>`
+
+```bash
+curl http://livingroom.local/binary_sensor/Living%20Room%20Status
+```
+
+```json
+{
+  "id": "binary_sensor/Living Room Status",
+  "state": "ON",
+  "value": true
+}
+```
+
+---
+
+### Switch
+
+Switches report state identically to binary sensors and additionally accept POST commands.
+
+**GET** `/switch/<entity_name>` — returns current state (`ON`/`OFF`)
+
+**POST** `/switch/<entity_name>/turn_on` — turns the switch on
+
+**POST** `/switch/<entity_name>/turn_off` — turns the switch off
+
+**POST** `/switch/<entity_name>/toggle` — toggles the switch
+
+```bash
+# Read state
+curl http://livingroom.local/switch/Dehumidifier
+
+# Turn on
+curl -X POST http://livingroom.local/switch/Dehumidifier/turn_on
+
+# Turn off
+curl -X POST http://livingroom.local/switch/Dehumidifier/turn_off
+```
+
+---
+
+### Light
+
+**GET** `/light/<entity_name>`
+
+```bash
+curl http://livingroom.local/light/Living%20Room%20Lights
+```
+
+```json
+{
+  "id": "light/Living Room Lights",
+  "state": "ON",
+  "brightness": 255,
+  "color": { "r": 255, "g": 255, "b": 255 },
+  "effect": "None",
+  "white_value": 255
+}
+```
+
+**POST** `/light/<entity_name>/turn_on` — optional URL parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `brightness` | 0–255 | Light brightness |
+| `r` | 0–255 | Red channel |
+| `g` | 0–255 | Green channel |
+| `b` | 0–255 | Blue channel |
+| `white_value` | 0–255 | White channel (RGBW lights) |
+| `color_temp` | mireds | Color temperature |
+| `transition` | seconds | Transition duration |
+| `flash` | seconds | Flash duration |
+| `effect` | string | Effect name |
+
+**POST** `/light/<entity_name>/turn_off?transition=2` — fade off over 2 seconds
+
+**POST** `/light/<entity_name>/toggle`
+
+```bash
+# Dim to 50% over 2 seconds
+curl -X POST "http://livingroom.local/light/Living%20Room%20Lights/turn_on?brightness=128&transition=2"
+
+# Set warm white color temperature
+curl -X POST "http://livingroom.local/light/Living%20Room%20Lights/turn_on?color_temp=400"
+```
+
+---
+
+### Cover
+
+**GET** `/cover/<entity_name>`
+
+```bash
+curl http://livingroom.local/cover/Front%20Window%20Blinds
+```
+
+```json
+{
+  "id": "cover/Front Window Blinds",
+  "state": "OPEN",
+  "value": 0.8,
+  "current_operation": "IDLE",
+  "tilt": 0.5
+}
+```
+
+POST methods: `open`, `close`, `stop`, `toggle`, `set`
+
+| Parameter | Description |
+|-----------|-------------|
+| `position` | Target position 0.0 (closed) to 1.0 (open) for `set` |
+| `tilt` | Tilt angle 0.0–1.0, if supported |
+
+```bash
+# Move to 10% open with tilt at 30%
+curl -X POST "http://livingroom.local/cover/Front%20Window%20Blinds/set?position=0.1&tilt=0.3"
+
+# Stop mid-travel
+curl -X POST http://livingroom.local/cover/Front%20Window%20Blinds/stop
+```
+
+---
+
+### Button
+
+Buttons can only be pressed — no state is stored.
+
+**POST** `/button/<entity_name>/press`
+
+```bash
+curl -X POST http://livingroom.local/button/Do%20Something/press
+```
+
+---
+
+### Number
+
+**GET** `/number/<entity_name>`
+
+```json
+{
+  "id": "number/Desired Delay",
+  "state": "20.0000",
+  "value": 20
+}
+```
+
+**POST** `/number/<entity_name>/set?value=<n>` — set the number to `n` (must be within the component's min/max range)
+
+```bash
+curl -X POST "http://livingroom.local/number/Desired%20Delay/set?value=24"
+```
+
+---
+
+### Select
+
+**GET** `/select/<entity_name>` — returns current option
+
+**GET** `/select/<entity_name>?detail=all` — returns current option plus all available options
+
+```json
+{
+  "id": "select/House Mode",
+  "name": "House Mode",
+  "state": "party",
+  "value": "party",
+  "option": ["party", "sleep", "relax", "home", "away"]
+}
+```
+
+**POST** `/select/<entity_name>/set?option=<value>` — set the selected option
+
+```bash
+curl -X POST "http://livingroom.local/select/House%20Mode/set?option=home"
+```
+
+---
+
+### Fan
+
+**GET** `/fan/<entity_name>`
+
+```json
+{
+  "id": "fan/Living Room Fan",
+  "state": "ON",
+  "value": true,
+  "speed_level": 2,
+  "oscillation": false
+}
+```
+
+POST methods: `turn_on`, `turn_off`, `toggle`
+
+`turn_on` optional parameters: `speed_level` (integer), `oscillation` (boolean)
+
+```bash
+curl -X POST "http://livingroom.local/fan/Living%20Room%20Fan/turn_on?speed_level=3"
+```
+
+---
+
+### Alarm Control Panel
+
+**GET** `/alarm_control_panel/<entity_name>`
+
+```json
+{
+  "id": "alarm_control_panel/My Alarm",
+  "state": "ARMED_AWAY",
+  "value": 2
+}
+```
+
+Possible states: `DISARMED`, `ARMED_HOME`, `ARMED_AWAY`, `ARMED_NIGHT`, `ARMED_VACATION`, `ARMED_CUSTOM_BYPASS`, `PENDING`, `ARMING`, `DISARMING`, `TRIGGERED`
+
+POST methods: `arm_away`, `arm_home`, `arm_night`, `arm_vacation`, `disarm`
+
+The optional `code` parameter should be sent in POST body data rather than in the URL query string to avoid logging credentials.
+
+---
+
+## Authentication
+
+If you configured `auth:` in `web_server:`, all requests require HTTP Basic Authentication:
+
+```bash
+curl -u "admin:mysecret" http://livingroom.local/sensor/Temperature
+```
+
+```yaml
+# Example web_server config with auth
+web_server:
+  port: 80
+  auth:
+    username: admin
+    password: mysecret
+```

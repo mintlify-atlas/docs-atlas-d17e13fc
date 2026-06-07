@@ -1,0 +1,215 @@
+---
+title: "Display Time and Temperature on an SSD1306 OLED"
+sidebarTitle: "OLED Display"
+description: "Complete ESPHome YAML to show current time and live sensor temperatures on a 128×64 SSD1306 OLED display connected over I2C to an ESP board."
+---
+
+This recipe drives a 128×64 monochrome OLED display to show the current time and one or more live temperature readings, all pulled from Home Assistant or a locally-attached sensor. ESPHome's built-in TrueType font renderer and display lambda make it straightforward to build a clean, always-on information panel without any external libraries.
+
+## Hardware needed
+
+| Component | Notes |
+|---|---|
+| ESP8266 or ESP32 board | Any board with two free GPIO pins for I²C |
+| SSD1306 or SH1106 128×64 OLED | 1.3 " modules often use the SH1106 controller — check your datasheet |
+| Four dupont wires | VCC, GND, SDA, SCL |
+
+Wire the display to your ESP board as follows:
+
+- **VCC** → 3.3 V (some modules also accept 5 V — check your display's spec sheet)
+- **GND** → GND
+- **SDA** → any free GPIO (e.g. GPIO4 on ESP8266 / GPIO21 on ESP32)
+- **SCL** → any free GPIO (e.g. GPIO5 on ESP8266 / GPIO22 on ESP32)
+
+<Warning>
+  If your display is rated for 3.3 V only, never connect VCC to a 5 V pin.
+  Most cheap SSD1306 breakout boards include an onboard regulator and accept
+  both voltages, but always verify before powering up.
+</Warning>
+
+## Font files
+
+ESPHome renders text using TrueType fonts. You must place the `.ttf` files in the same `/config/esphome/` directory as your YAML before running a build.
+
+Good free choices:
+- **Silkscreen** (`slkscr.ttf`) — a crisp pixel font, great at small sizes
+- **Bebas Neue** (`BebasNeue-Regular.ttf`) — tall, narrow digits that read well at large sizes
+- **Arial** (`arial.ttf`) — familiar sans-serif for mid-size labels
+
+Alternatively, use the `gfonts://` scheme to let ESPHome download the font automatically at compile time:
+
+```yaml
+font:
+  - file: "gfonts://Silkscreen"
+    id: font_small
+    size: 10
+  - file: "gfonts://Roboto"
+    id: font_large
+    size: 24
+```
+
+<Tip>
+  At sizes below 10 px, many fonts become illegible on a 128×64 display.
+  Silkscreen and similar "pixel" fonts are designed to stay sharp at 8–10 px,
+  while proportional fonts like Roboto or Arial look better at 14 px and above.
+  Experiment in a test build before committing to a layout.
+</Tip>
+
+## Complete YAML configuration
+
+The configuration below pulls time from Home Assistant, imports two temperature sensors (inside and outside), defines three font sizes, and renders the layout with `printf` / `strftime` calls inside the display lambda.
+
+```yaml
+esphome:
+  name: oled-display
+  friendly_name: OLED Display
+
+esp8266:
+  board: d1_mini   # change to match your board
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+logger:
+ota:
+  platform: esphome
+
+# ── Time ─────────────────────────────────────────────────────────────────────
+time:
+  - platform: homeassistant
+    id: esptime
+
+# ── Sensors pulled from Home Assistant ───────────────────────────────────────
+sensor:
+  - platform: homeassistant
+    id: inside_temperature
+    entity_id: sensor.living_room_temperature   # replace with your entity
+    internal: true
+
+  - platform: homeassistant
+    id: outside_temperature
+    entity_id: weather.home                     # replace with your entity
+    internal: true
+
+text_sensor:
+  - platform: homeassistant
+    id: outside_temperature_unit
+    entity_id: weather.home                     # same weather entity
+    attribute: temperature_unit
+    internal: true
+
+# ── Fonts ─────────────────────────────────────────────────────────────────────
+font:
+  - file: "slkscr.ttf"        # place in /config/esphome/
+    id: font_small
+    size: 8
+
+  - file: "BebasNeue-Regular.ttf"
+    id: font_medium
+    size: 48
+
+  - file: "arial.ttf"
+    id: font_large
+    size: 14
+
+# ── I²C bus ──────────────────────────────────────────────────────────────────
+i2c:
+  sda: GPIO4    # adjust to your wiring
+  scl: GPIO5
+  scan: false
+  # frequency: 300kHz   # uncomment if display updates feel slow
+
+# ── Display ──────────────────────────────────────────────────────────────────
+display:
+  - platform: ssd1306_i2c
+    model: "SH1106 128x64"   # use SSD1306 128x64 if you have that controller
+    address: 0x3C            # run scan: true once to confirm your address
+    lambda: |-
+      // ── Header labels ──────────────────────────────────────────────────
+      it.printf(0, 0, id(font_small), TextAlign::TOP_LEFT, "Time and");
+      it.printf(0, 12, id(font_small), TextAlign::TOP_LEFT, "Temperature");
+
+      // ── Clock in HH:MM ─────────────────────────────────────────────────
+      it.strftime(0, 60, id(font_medium), TextAlign::BASELINE_LEFT,
+                  "%H:%M", id(esptime).now());
+
+      // ── Inside temperature (top-right) ─────────────────────────────────
+      if (id(inside_temperature).has_state()) {
+        it.printf(127, 23, id(font_medium), TextAlign::TOP_RIGHT,
+                  "%.1f", id(inside_temperature).state);
+      }
+
+      // ── Outside temperature (bottom-right) ────────────────────────────
+      if (id(outside_temperature).has_state()) {
+        it.printf(127, 60, id(font_medium), TextAlign::BASELINE_RIGHT,
+                  "%.1f%s",
+                  id(outside_temperature).state,
+                  id(outside_temperature_unit).state.c_str());
+      }
+```
+
+## Configuration walk-through
+
+<Steps>
+  <Step title="Time component">
+    `platform: homeassistant` syncs the on-chip RTC from Home Assistant over
+    the native API. If your device is not always connected to HA, swap this
+    for `platform: sntp` and supply NTP server addresses — the rest of the
+    config stays identical.
+  </Step>
+  <Step title="Sensor imports">
+    `platform: homeassistant` sensors mirror any numeric entity from HA onto
+    the ESP without republishing it back. Setting `internal: true` keeps your
+    HA entity list clean. The `has_state()` guard in the display lambda
+    prevents the string `nan` from appearing on screen before the first value
+    arrives.
+  </Step>
+  <Step title="Font definitions">
+    Each `font` entry compiles the glyphs you need into firmware at build time.
+    The `id` field is what you reference inside the display lambda — keep names
+    short and descriptive (`font_small`, `font_medium`, `font_large`).
+  </Step>
+  <Step title="I²C bus">
+    Set `sda` and `scl` to your actual GPIO numbers. Run with `scan: true`
+    once (and check the ESPHome logs) to discover the I²C address of your
+    display if you are unsure whether it is `0x3C` or `0x3D`.
+  </Step>
+  <Step title="Display lambda">
+    The lambda runs every display refresh cycle. `it.printf` works like C's
+    `printf`; `it.strftime` uses standard `strftime` format codes. The second
+    and third arguments are the X/Y pixel coordinates. `TextAlign` constants
+    control which corner of the text bounding box sits at those coordinates —
+    `BASELINE_LEFT` pins the text baseline to the left edge, useful for
+    aligning digits that vary in width.
+  </Step>
+</Steps>
+
+## Displaying alarm state instead of labels
+
+Swap the static "Time and Temperature" header for a live text sensor — for example your Home Assistant alarm panel state:
+
+```yaml
+text_sensor:
+  - platform: homeassistant
+    entity_id: alarm_control_panel.my_alarm_system
+    name: "Alarm State"
+    id: alarm_state
+
+display:
+  - platform: ssd1306_i2c
+    model: "SH1106 128x64"
+    address: 0x3C
+    lambda: |-
+      it.printf(64, 0, id(font_small), TextAlign::TOP_CENTER,
+                "Alarm: %s", id(alarm_state).state.c_str());
+```
+
+## See also
+
+- [SSD1306 Display component](/components/display-index)
+- [Display Rendering Engine](/components/display-index)
+- [Font component](/components/font/)
+- [Home Assistant Sensor](/components/sensor-index)
+- SNTP Time

@@ -1,0 +1,221 @@
+---
+title: "Build a Whole-Home Power Meter with ESPHome"
+sidebarTitle: "Power Meter"
+description: "Monitor whole-home electricity usage with ESPHome using a CT clamp sensor, ADC input, and the voltage/current/power sensor components."
+---
+
+Most utility meters have a small red LED on the front that pulses once for every watt-hour consumed — a standard called the "pulse output" or S0 port. By pointing a photoresistor at that LED (or wiring directly to an exposed S0 terminal), an ESP board can count pulses and translate them into real-time watts and cumulative kilowatt-hours without touching any mains wiring. This recipe walks through the hardware, the ESPHome configuration, and the calibration steps to get accurate readings in Home Assistant.
+
+<Note>
+  This recipe is **non-invasive**: the photoresistor approach requires no
+  contact with mains electricity whatsoever. If you use the S0 terminal
+  variant, those terminals are also low-voltage dry contacts — still perfectly
+  safe. Never open your main distribution board or touch live conductors unless
+  you are a qualified electrician. If in doubt, call one.
+</Note>
+
+## Hardware needed
+
+| Component | Notes |
+|---|---|
+| ESP8266 or ESP32 board | Any board with a free digital GPIO |
+| Photoresistor (LDR) | Match the wavelength to your meter's LED (~630 nm red) |
+| 10 kΩ resistor | Forms a voltage divider with the LDR |
+| Small piece of black foam or tape | Shields the LDR from ambient light |
+| Dupont wires | Short runs only |
+
+### Wiring — photoresistor voltage divider
+
+```
+3.3V ──── [Photoresistor] ──┬──── GPIO12
+                            │
+                         [10kΩ]
+                            │
+                           GND
+```
+
+Mount the photoresistor over the meter's pulse LED and use black foam or opaque tape to block stray light from the room. The more light-tight the enclosure, the more reliable the pulse detection.
+
+### Wiring — S0 port (alternative)
+
+Some meters expose an S0 terminal directly. Wire it as follows:
+
+```
+S0 ──────────────────────── VCC (3.3V)
+S0 ──┬──── [10kΩ] ────────── GND
+     │
+     └──────────────────── GPIO12
+```
+
+<Note>
+  The S0 port is a dry-contact switch. When the meter fires a pulse the
+  contact closes, pulling the GPIO low through the resistor. Use `inverted:
+  true` in the GPIO pin configuration to account for this active-low logic.
+</Note>
+
+## Complete YAML configuration
+
+```yaml
+esphome:
+  name: power-meter
+  friendly_name: Power Meter
+
+esp8266:
+  board: d1_mini   # adjust to your board
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  actions:
+    # Expose an action so you can reset the kWh total from Home Assistant
+    - action: set_total
+      variables:
+        new_total: int
+      then:
+        - pulse_meter.set_total_pulses:
+            id: sensor_pulse_meter
+            value: !lambda 'return new_total * 1000;'
+
+logger:
+ota:
+  platform: esphome
+
+# ── Time source (needed for total_daily_energy) ───────────────────────────────
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
+# ── Sensors ──────────────────────────────────────────────────────────────────
+sensor:
+  # Real-time power in watts
+  - platform: pulse_meter
+    name: "Power"
+    id: sensor_pulse_meter
+    pin: GPIO12              # adjust to your wiring
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    # internal_filter: 20ms  # uncomment and tune if pulses are missed at high load
+    filters:
+      # Conversion: pulse_meter outputs pulses/min.
+      # With 1000 pulses/kWh: (60 / 1000) * 1000 W/kW = 60 W·min/pulse → multiply: 60
+      # With 10000 pulses/kWh: (60 / 10000) * 1000 = 6 → multiply: 6
+      # Adjust the factor below to match your meter's impulse constant.
+      - multiply: 6
+      - throttle_average: 10s   # smooth rapid updates before sending to HA
+      - filter_out: NaN
+    # Sub-sensor: cumulative pulse count converted to kWh
+    total:
+      name: "Electricity Total"
+      unit_of_measurement: "kWh"
+      device_class: energy
+      state_class: total_increasing
+      accuracy_decimals: 3
+      filters:
+        - multiply: 0.0001   # 1 / 10000 pulses per kWh → adjust to your meter
+
+  # Daily energy — continues integrating even while HA is restarting
+  - platform: total_daily_energy
+    name: "Total Daily Energy"
+    id: sensor_total_daily_energy
+    power_id: sensor_pulse_meter
+    unit_of_measurement: "kWh"
+    state_class: total_increasing
+    device_class: energy
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001   # W → kW
+```
+
+## Configuration walk-through
+
+<Steps>
+  <Step title="Identify your meter's impulse constant">
+    The impulse constant is printed on the front of your utility meter —
+    look for a label like **1000 imp/kWh** or **10000 imp/kWh**. This number
+    tells you how many LED pulses equal one kilowatt-hour.
+  </Step>
+  <Step title="Calculate the multiply factor">
+    The `pulse_meter` sensor reports in **pulses per minute**. To convert to
+    watts, use:
+
+    ```
+    factor = (60 s/min ÷ impulse_constant) × 1000 W/kW
+    ```
+
+    Examples:
+    - 1000 imp/kWh → factor = `60`
+    - 10000 imp/kWh → factor = `6`
+
+    Set this as the `multiply` value under `filters`.
+  </Step>
+  <Step title="Set the total energy multiply factor">
+    The `total` sub-sensor counts raw pulses. Divide by the impulse constant
+    to convert to kWh:
+
+    - 1000 imp/kWh → `multiply: 0.001`
+    - 10000 imp/kWh → `multiply: 0.0001`
+  </Step>
+  <Step title="Tune internal_filter for your meter">
+    If you see missed pulses at high load, increase `internal_filter`. To
+    find the right value, divide one second by the maximum pulse rate your
+    meter can produce at its rated load limit, then subtract a small margin.
+    For example, a 16 kW meter at 10000 imp/kWh produces ≈ 44 pulses/sec,
+    so the minimum pulse width is ≈ 22 ms — set `internal_filter: 20ms`.
+  </Step>
+  <Step title="Throttle updates to Home Assistant">
+    High-load situations can produce sub-second pulses. The `throttle_average:
+    10s` filter groups pulses into 10-second windows and sends an averaged
+    watt value, which is easier for Home Assistant's history to handle.
+    Increase this interval if you see performance issues.
+  </Step>
+  <Step title="Reset the kWh total">
+    The `set_total` API action lets you align the ESPHome cumulative total
+    with what your utility meter shows. In Home Assistant, call the
+    `esphome.power_meter_set_total` service with `new_total` set to the
+    current meter reading in kWh.
+  </Step>
+</Steps>
+
+## Tracking daily energy
+
+The `total_daily_energy` sensor resets automatically at midnight (using the time component) and accumulates kWh throughout the day. Unlike Home Assistant's Riemann-sum integration helper, this runs on the device itself, so it continues to work through HA restarts and updates.
+
+```yaml
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
+sensor:
+  - platform: total_daily_energy
+    name: "Total Daily Energy"
+    power_id: sensor_pulse_meter
+    unit_of_measurement: "kWh"
+    state_class: total_increasing
+    device_class: energy
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+```
+
+## Calibration tips
+
+<Tip>
+  Before trusting the readings, compare the ESPHome kWh total against your
+  utility meter over 24 hours. If the values drift apart, your `multiply`
+  factor or `internal_filter` needs adjustment. Common causes of missed pulses:
+  too much ambient light leaking onto the LDR, too tight an `internal_filter`,
+  or a GPIO not fast enough to catch high-frequency pulses (use an interrupt-
+  capable pin on ESP32 for best results).
+</Tip>
+
+## See also
+
+- [Pulse Meter Sensor](/components/sensor-index)
+- [Pulse Counter Sensor](/components/sensor-index)
+- [Total Daily Energy Sensor](/components/sensor-index)
+- Home Assistant Time Source
+- [Home Assistant Glow project](https://github.com/klaasnicolaas/home-assistant-glow)

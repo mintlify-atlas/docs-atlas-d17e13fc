@@ -1,0 +1,127 @@
+---
+title: "ESPHome: Smart Home Firmware From Simple YAML"
+sidebarTitle: "Introduction"
+description: "ESPHome turns microcontrollers into smart home devices with YAML config. Supports ESP32, ESP8266, RP2040, BK72xx and more — no C++ required."
+---
+
+ESPHome is an open-source firmware framework that converts ESP32, ESP8266, RP2040, and other supported microcontrollers into fully-featured smart home devices — all from simple YAML configuration files. No C++ knowledge required: you describe your hardware in plain text, and ESPHome compiles and flashes the right firmware automatically.
+
+## How It Works
+
+ESPHome follows a straightforward three-step flow: you write a YAML configuration file describing your board and components, ESPHome compiles that configuration into custom C++ firmware, and then flashes it onto your device — either over USB for the first install or wirelessly (OTA) for every update after that.
+
+Hardware you define in the configuration — sensors, switches, lights, displays — automatically surfaces in Home Assistant's UI without any additional integration work.
+
+Here is a minimal working configuration that connects an ESP32 to Wi-Fi and exposes a GPIO switch:
+
+```yaml
+esphome:
+  name: living-room-lamp
+  friendly_name: Living Room Lamp
+
+esp32:
+  board: esp32dev
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+switch:
+  - platform: gpio
+    name: "Living Room Lamp"
+    pin: GPIO5
+```
+
+Once flashed, that device is on your network, updatable over the air, and visible in Home Assistant — all from those 20 lines of YAML.
+
+## Supported Platforms
+
+ESPHome supports a wide range of microcontroller families:
+
+| Platform | Chips / Boards | Notes |
+|---|---|---|
+| **ESP32** | ESP32, ESP32-S2, ESP32-S3 | Widest component support |
+| **ESP32-C series** | ESP32-C3, ESP32-C6 | RISC-V, Bluetooth LE |
+| **ESP8266** | ESP8266, ESP-01, NodeMCU | Legacy, broad support |
+| **RP2040** | Raspberry Pi Pico, Pico W | ARM Cortex-M0+ |
+| **BK72xx** | BK7231N, BK7231T | Libretiny-based |
+| **RTL87xx** | RTL8710BN, RTL8720CF | Libretiny-based |
+| **nRF52** | nRF52840 | Nordic Semiconductor |
+| **Host / Desktop** | Linux, macOS | Run components locally for testing |
+
+## Who Uses ESPHome?
+
+ESPHome serves a broad range of users across the home automation spectrum:
+
+- **DIY Enthusiasts** — build custom sensors, switches, displays, and automations tailored to exact needs, without writing firmware from scratch.
+- **Smart Home Hobbyists** — extend Home Assistant or other platforms with affordable, locally-controlled custom devices.
+- **Professional Integrators** — deploy reliable, cloud-free smart devices for clients using battle-tested, community-maintained components.
+- **Manufacturers** — create [Made for ESPHome](https://esphome.io/guides/made_for_esphome/) certified products with standardized, upgradeable firmware.
+
+## Key Concepts
+
+### Configurations
+
+A device configuration is one or more YAML files that fully describe a node: the microcontroller board, network credentials, connected sensors and actuators, and any automations. ESPHome uses this file as the single source of truth for what firmware the device runs.
+
+### Components
+
+Components are the building blocks of a configuration. ESPHome ships with hundreds of built-in components covering sensors (temperature, humidity, motion, distance), outputs (GPIO, PWM, I²C), displays, buttons, covers, fans, and more. Each component is configured with a few lines of YAML.
+
+### Automations
+
+ESPHome includes a powerful on-device automation engine. Triggers (on boot, on sensor value, on button press) can fire actions (turn on a switch, send a notification, log a message) entirely on the device — no internet connection, no cloud, no latency.
+
+### Home Assistant Integration
+
+ESPHome devices speak the native Home Assistant API. Once a device is on your network, Home Assistant discovers it automatically and imports all entities. Updates, logs, and configuration changes flow through the ESPHome Device Builder add-on or the CLI.
+
+## Feature Highlights
+
+<CardGroup cols={2}>
+  <Card title="No Coding Required" icon="file-code">
+    Describe your hardware in YAML — ESPHome generates all the C++ firmware for you. If a component exists, you don't need to write a single line of code.
+  </Card>
+  <Card title="Wireless OTA Updates" icon="wifi">
+    After the first USB flash, every subsequent update is delivered over the air. No more pulling devices out of walls or ceilings.
+  </Card>
+  <Card title="Hundreds of Components" icon="puzzle-piece">
+    Sensors, displays, buttons, covers, fans, lights, media players — if it connects to a microcontroller, there's probably an ESPHome component for it.
+  </Card>
+  <Card title="100% Local Control" icon="server">
+    Devices operate entirely on your local network. No cloud subscription, no vendor lock-in, no service discontinuation risk.
+  </Card>
+  <Card title="Home Assistant Native" icon="home">
+    Deep, first-class integration with Home Assistant. Entities appear automatically, and the ESPHome Device Builder add-on manages everything from one UI.
+  </Card>
+  <Card title="Active Community" icon="users">
+    Thousands of community-contributed configurations, a device database at devices.esphome.io, and an active Discord and GitHub community.
+  </Card>
+</CardGroup>
+
+## Getting Started
+
+Choose the path that fits your setup:
+
+<CardGroup cols={2}>
+  <Card title="Home Assistant Add-on" icon="plug" href="/guides/getting-started-ha">
+    The easiest path — install the ESPHome Device Builder add-on and flash your first device through a guided web UI in minutes.
+  </Card>
+  <Card title="Command Line" icon="terminal" href="/guides/getting-started-cli">
+    For users who prefer pip or Docker. Full control over compilation, flashing, and log streaming from your terminal.
+  </Card>
+  <Card title="Installation Guide" icon="download" href="/guides/installing-esphome">
+    Detailed instructions for pip (Windows, macOS, Linux), Homebrew, Docker, and the Home Assistant add-on.
+  </Card>
+  <Card title="Component Reference" icon="book" href="https://esphome.io/components/">
+    Browse the full library of sensors, outputs, displays, and integrations supported by ESPHome.
+  </Card>
+</CardGroup>

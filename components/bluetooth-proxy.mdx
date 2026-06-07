@@ -1,0 +1,205 @@
+---
+title: "Bluetooth Proxy: Extend Home Assistant BLE Range"
+sidebarTitle: "Bluetooth Proxy"
+description: "Turn any ESP32 into a Bluetooth proxy for Home Assistant, extending Bluetooth device range across your home without dedicated hardware."
+---
+
+The Bluetooth Proxy component transforms any ESP32 device into a Bluetooth Low Energy (BLE) relay for Home Assistant. Instead of requiring a USB Bluetooth adapter near every BLE device, your ESP32 nodes receive and forward BLE advertisements and GATT connections over Wi-Fi or Ethernet to Home Assistant. The result is fault-tolerant, multi-node Bluetooth coverage across your entire home, with Home Assistant automatically aggregating all proxies alongside any USB adapters you already have.
+
+<Note>
+  Only **BLE devices** are supported — the component name `bluetooth_proxy` covers Bluetooth Low Energy only. Classic Bluetooth devices are not supported. To check whether a specific device is supported, search for it in the [Home Assistant Integrations list](https://www.home-assistant.io/integrations/).
+</Note>
+
+## Requirements
+
+<CardGroup cols={2}>
+  <Card title="ESP32 Required" icon="microchip">
+    Bluetooth Proxy is **ESP32-only**. ESP8266 and RP2040 do not have Bluetooth hardware. Any ESP32 variant (original, S2, S3, C3, etc.) works, though variants without BLE are unsupported.
+  </Card>
+  <Card title="Home Assistant 2022.9+" icon="house">
+    Your Home Assistant instance must be version **2022.9 or newer** to use the Bluetooth integration that consumes proxy data. Earlier versions will not discover the proxy.
+  </Card>
+  <Card title="ESP32 BLE Tracker" icon="radar">
+    `bluetooth_proxy` depends on the ESP32 BLE Tracker component. Add `esp32_ble_tracker:` to your configuration alongside `bluetooth_proxy:`.
+  </Card>
+  <Card title="esp-idf Framework" icon="wrench">
+    The **esp-idf** framework is recommended over Arduino. It uses less RAM, which matters because the BLE stack and proxy together consume significant memory.
+  </Card>
+</CardGroup>
+
+## Basic Configuration
+
+The minimal configuration to enable a Bluetooth proxy requires just two component entries:
+
+```yaml
+esp32_ble_tracker:
+
+bluetooth_proxy:
+  active: true
+```
+
+## Configuration Variables
+
+<ParamField path="active" type="boolean">
+  Enables proxying active GATT connections from Home Assistant to BLE devices. Active connections allow Home Assistant to read/write characteristics on BLE devices, not just receive their advertisements. Defaults to `true`.
+</ParamField>
+
+<ParamField path="cache_services" type="boolean">
+  Enables caching of GATT service discovery results in NVS flash storage. This significantly speeds up reconnections to known devices by skipping service discovery. Defaults to `true`.
+</ParamField>
+
+<ParamField path="connection_slots" type="integer">
+  The maximum number of simultaneous active GATT connections the proxy will maintain. Each slot consumes approximately 1 KB of RAM. Maximum value is `9`, but **do not exceed `5`** to avoid memory and stability issues. Ethernet-based proxies can reliably use `4` slots. Defaults to `3`.
+
+  The value must not exceed the `max_connections` configured for the ESP32 BLE component.
+</ParamField>
+
+## How Active Connections Work
+
+When Home Assistant needs to read a value or write a command to a BLE device, it opens an **active GATT connection** through the proxy. Each such connection occupies one of the configured `connection_slots`.
+
+- **Long-lived connections** (locks, thermostats): Hold a slot for the duration of the connection.
+- **Brief connections** (many sensors): Connect, exchange data, and disconnect — releasing the slot for other devices.
+- **Passive advertisement data** (BTHome sensors, etc.): Received independently; not limited by connection slots.
+
+<Tip>
+  If you have more BLE devices than `connection_slots`, this is usually fine — devices that briefly connect and disconnect share slots over time. Only devices that maintain a persistent connection truly "use" a slot continuously.
+</Tip>
+
+## Passive vs. Active Scanning
+
+Scanning is separate from active connections and is controlled by the `esp32_ble_tracker` component, not `bluetooth_proxy`.
+
+| Mode | Description | Use case |
+|---|---|---|
+| **Active scanning** (default) | Sends scan requests to devices for additional data | Initial device pairing; discovering device capabilities |
+| **Passive scanning** | Listens only; no scan requests sent | Ongoing operation; reduces battery drain on BLE devices |
+
+To switch to passive scanning (useful if you experience overheating on PoE proxies):
+
+```yaml
+esp32_ble_tracker:
+  scan_parameters:
+    active: false
+```
+
+<Warning>
+  Avoid changing the `interval` or `window` scan parameters from their defaults. Aggressive scan settings typically provide no improvement while increasing CPU usage, and can cause overheating on PoE proxies or Wi-Fi instability on Wi-Fi proxies.
+</Warning>
+
+## Improving Reception Performance
+
+- **Use Ethernet** when possible. Offloading network traffic from the ESP32 radio significantly improves Bluetooth reception quality since Wi-Fi and Bluetooth share the 2.4 GHz radio on most ESP32 variants.
+- **External antenna**: Prefer boards with an external antenna connector (e.g., Olimex ESP32-PoE-ISO-EA) over those with PCB antennas.
+- **Placement**: Keep the ESP32 proxy at least **3 meters** away from routers, switches, and other network equipment to minimize EMI interference. Place it as close as possible to the BLE devices it needs to reach.
+
+## Complete Configuration Examples
+
+### Wi-Fi Connected Bluetooth Proxy
+
+This is the recommended minimal configuration for a Wi-Fi-based proxy. If you experience issues, simplify your config to match this as closely as possible:
+
+```yaml
+substitutions:
+  name: my-bluetooth-proxy
+
+esphome:
+  name: ${name}
+  name_add_mac_suffix: true
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+
+api:
+
+ota:
+  platform: esphome
+
+esp32_ble_tracker:
+
+bluetooth_proxy:
+  active: true
+```
+
+### Ethernet Connected Bluetooth Proxy
+
+For best performance, use an Ethernet-capable board. This example targets the Olimex ESP32-PoE-ISO. Adjust the `board` and `ethernet:` block for your specific hardware:
+
+```yaml
+substitutions:
+  name: my-bluetooth-proxy
+  board: esp32-poe-iso
+
+esphome:
+  name: ${name}
+  name_add_mac_suffix: true
+
+esp32:
+  board: ${board}
+  variant: esp32
+  framework:
+    type: esp-idf
+
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk:
+    mode: CLK_OUT
+    pin: GPIO17
+  phy_addr: 0
+  power_pin: GPIO12
+
+logger:
+
+api:
+
+ota:
+  platform: esphome
+
+esp32_ble_tracker:
+
+bluetooth_proxy:
+  active: true
+  connection_slots: 4
+```
+
+## Troubleshooting
+
+### Memory Issues
+
+<CardGroup cols={2}>
+  <Card title="Use esp-idf Framework" icon="memory">
+    Switch from `arduino` to `esp-idf` in your `esp32:` block. The esp-idf framework uses significantly less RAM, leaving more headroom for the BLE stack.
+  </Card>
+  <Card title="Update NVS Partition" icon="hard-drive">
+    If you last flashed via serial before ESPHome 2022.12.0 (esp-idf) or 2026.4.0 (Arduino), update your partition table via serial or OTA partition table update to increase NVS partition size.
+  </Card>
+  <Card title="Disable Web Server" icon="server">
+    The Web Server component consumes additional RAM. If you experience crashes or instability, remove `web_server:` from your proxy configuration.
+  </Card>
+  <Card title="Reduce Connection Slots" icon="plug">
+    Lower `connection_slots` to `2` or `1` if memory pressure is causing instability. Each slot costs ~1 KB of RAM.
+  </Card>
+</CardGroup>
+
+### Device Not Discovered
+
+- Confirm the device is BLE (not Classic Bluetooth).
+- Check the [Home Assistant Integrations list](https://www.home-assistant.io/integrations/) to verify your device has a supported integration.
+- Ensure your Home Assistant instance is version 2022.9 or newer.
+- Verify the `api:` component is configured and the device is connected to Home Assistant.
+
+## See Also
+
+- ESP32 Bluetooth Low Energy Tracker Hub
+- [BTHome Protocol](https://bthome.io/)
+- [Ready-made Bluetooth Proxy Projects](https://devices.esphome.io/)

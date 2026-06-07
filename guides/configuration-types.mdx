@@ -1,0 +1,264 @@
+---
+title: "ESPHome Configuration Types and Variable Reference"
+sidebarTitle: "Config Types"
+description: "Reference for all ESPHome configuration variable types: IDs, pins, pin schemas, time durations, colors, and platform-specific values."
+---
+
+ESPHome uses a consistent set of configuration variable types across all its components. Understanding these types helps you read component documentation, avoid common errors, and write correct YAML configurations the first time. This page documents every built-in type you will encounter in the ESPHome reference.
+
+---
+
+## ID
+
+IDs are the primary way ESPHome connects components defined in different parts of your configuration. For example, you define a `light` component with an `id`, then reference that same ID in an `automation` or `script` to control it at runtime.
+
+**Naming rules** — IDs are converted into C++ variable names, so they must follow [C++ identifier conventions](https://en.cppreference.com/w/cpp/language/identifiers):
+
+- Must start with a letter (`a`–`z`, `A`–`Z`) or underscore (`_`)
+- Can contain letters, digits, and underscores
+- Cannot contain spaces or special characters other than `_`
+- Cannot be a C++ reserved keyword (e.g., `int`, `class`, `return`)
+- Must be unique within the configuration file
+
+```yaml
+output:
+  - platform: ledc
+    id: my_led_output    # ✅ valid — used below
+    pin: GPIO2
+
+light:
+  - platform: monochromatic
+    output: my_led_output  # references the ID above
+    name: "Status LED"
+```
+
+<Note>
+  ESPHome IDs are internal to the firmware and are **not** the same as Home Assistant entity IDs. Renaming an ESPHome ID does not affect how the entity appears in Home Assistant.
+</Note>
+
+---
+
+## Pin
+
+ESPHome always uses the chip's **internal GPIO numbers**. These are integers that can optionally be prefixed with `GPIO`.
+
+```yaml
+# Both of these refer to the same physical pin
+output:
+  - platform: gpio
+    pin: 2
+
+output:
+  - platform: gpio
+    pin: GPIO2
+```
+
+**Board aliases** — Most development boards define friendly aliases for their exposed pins. For example, the NodeMCU ESP8266 uses silk-screened labels `D0` through `D8` that map to internal GPIO numbers. Either form is accepted in configuration:
+
+```yaml
+# NodeMCU ESP8266 — both are equivalent
+some_component:
+  pin: GPIO16
+
+some_component:
+  pin: D0   # D0 is the NodeMCU alias for GPIO16
+```
+
+Supported aliases depend on the board specified in the `esphome:` or `esp8266:` / `esp32:` section. Refer to the specific board's datasheet or the ESPHome board definitions for the full mapping.
+
+---
+
+## Pin Schema
+
+When a component needs more control over a pin beyond just its number, it accepts a **pin schema** — an expanded mapping that configures direction, pull resistors, inversion, and other electrical characteristics.
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    # Simple form — just a number
+    pin: GPIO4
+
+    # Advanced form — full pin schema
+    pin:
+      number: GPIO4
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+```
+
+### Configuration Variables
+
+**`number`** *(Required, Pin)*
+The GPIO number of the pin, in any form accepted by the [Pin type](#pin).
+
+**`inverted`** *(Optional, boolean, default: `false`)*
+When `true`, all read and write values are logically inverted. Useful when a circuit is wired active-low.
+
+```yaml
+pin:
+  number: GPIO5
+  inverted: true   # LOW on the wire = HIGH in ESPHome logic
+```
+
+**`mode`** *(Optional, string or mapping)*
+Configures the pin's electrical direction and internal resistors. Accepts either a shorthand string or an explicit mapping.
+
+Shorthand strings:
+
+| String | Equivalent mapping |
+|---|---|
+| `INPUT` | `input: true` |
+| `OUTPUT` | `output: true` |
+| `OUTPUT_OPEN_DRAIN` | `output: true, open_drain: true` |
+| `INPUT_PULLUP` | `input: true, pullup: true` |
+| `INPUT_PULLDOWN` | `input: true, pulldown: true` |
+| `ANALOG` | (platform-specific analog mode) |
+| `INPUT_OUTPUT_OPEN_DRAIN` | `input: true, output: true, open_drain: true` |
+
+Mapping keys (all optional booleans):
+- **`input`** — Configure the pin as a digital input.
+- **`output`** — Configure the pin as a digital output.
+- **`pullup`** — Enable the internal pull-up resistor.
+- **`pulldown`** — Enable the internal pull-down resistor.
+- **`open_drain`** — Use open-drain drive mode instead of push-pull.
+
+```yaml
+pin:
+  number: GPIO12
+  mode:
+    input: true
+    pullup: true
+```
+
+**`allow_other_uses`** *(Optional, boolean, default: `false`)*
+By default, ESPHome raises an error if the same pin number appears in multiple component configurations. Set to `true` to suppress that error in the rare cases where a pin is intentionally shared between components.
+
+**`ignore_strapping_warning`** *(Optional, boolean, default: `false`)*
+Certain ESP32 pins are **strapping pins** sampled at boot to configure initial chip state (e.g., boot mode selection). ESPHome warns when you configure I/O on these pins. If you have verified that your specific circuit will not cause boot issues, set this to `true` to suppress the warning.
+
+<Warning>
+  Only suppress strapping pin warnings if you are absolutely certain your hardware design will not interfere with the chip's boot sequence. Incorrect use can prevent the device from booting.
+</Warning>
+
+**`drive_strength`** *(Optional, string, default: `20mA`)*
+*(ESP32 with ESP-IDF framework only)*
+Sets the maximum current the pad can source or sink. Options: `5mA`, `10mA`, `20mA`, `40mA`.
+
+```yaml
+pin:
+  number: GPIO2
+  drive_strength: 40mA
+```
+
+**`ignore_pin_validation_error`** *(Optional, boolean, default: `false`)*
+Some GPIO numbers are reserved for internal ESP32 functions (e.g., flash memory on GPIO 6–11). ESPHome raises an error if you try to use them. If your specific board routes these pins differently and you have confirmed they are safe to use, set this to `true`.
+
+---
+
+## Time
+
+Time values are used throughout ESPHome for `update_interval`, debounce durations, automation delays, and more. Several formats are supported:
+
+```yaml
+some_component:
+  # Unit suffixes
+  duration: 1000us    # microseconds
+  duration: 1000ms    # milliseconds
+  duration: 1.5s      # seconds (decimals allowed)
+  duration: 0.5min    # minutes
+  duration: 2h        # hours
+
+  # HH:MM and HH:MM:SS — must be quoted
+  duration: '2:01'       # 2 hours, 1 minute
+  duration: '2:01:30'    # 2 hours, 1 minute, 30 seconds
+
+  # Mapping form — combine multiple units
+  duration:
+    milliseconds: 10
+    seconds: 30
+    minutes: 25
+    hours: 3
+    days: 0
+```
+
+For `update_interval` specifically, two special values are also accepted:
+
+```yaml
+sensor:
+  - platform: template
+    update_interval: never    # pause updates entirely
+    update_interval: 0ms      # update every loop() cycle
+    update_interval: always   # alias for 0ms
+```
+
+<Tip>
+  When specifying `HH:MM` or `HH:MM:SS` time strings, always wrap them in quotes (`'2:01'`). Without quotes, the YAML parser interprets the colon as a key-value separator and the value will not parse correctly.
+</Tip>
+
+---
+
+## Color
+
+Color values appear in display, light, and LED matrix components. ESPHome accepts several formats depending on the component's color model.
+
+**RGB hex** — a `#RRGGBB` string:
+
+```yaml
+color:
+  - id: my_red
+    hex: FF0000
+
+# Or inline
+text_color: "#FF0000"
+```
+
+**RGB components** — separate `red`, `green`, `blue` values from `0` to `255`:
+
+```yaml
+color:
+  - id: my_color
+    red: 255
+    green: 165
+    blue: 0
+```
+
+**RGBW** — adds a `white` channel for LEDs with a dedicated white element:
+
+```yaml
+color:
+  - id: warm_white
+    red: 255
+    green: 200
+    blue: 150
+    white: 200
+```
+
+**Normalized floats** — some components accept `red_int`, `green_int`, `blue_int` as 0–255 integers or `red`, `green`, `blue` as 0.0–1.0 floats, depending on context. Check the individual component documentation.
+
+---
+
+## Range Values
+
+Some configuration options accept a **range** — a minimum and maximum numeric boundary. These are expressed as a mapping:
+
+```yaml
+number:
+  - platform: template
+    id: fan_speed
+    min_value: 0
+    max_value: 100
+    step: 5
+    optimistic: true
+```
+
+Range boundaries are inclusive. The `step` value controls the smallest increment the number entity can change by.
+
+---
+
+## See Also
+
+- [YAML Configuration Guide](/guides/yaml-configuration/)
+- [ESPHome Components Reference](/components/)
+- [Getting Started — Command Line](/guides/getting-started-cli)
+- [Frequently Asked Questions](/guides/faq/)

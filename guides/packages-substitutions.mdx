@@ -1,0 +1,383 @@
+---
+title: "Reusing Config with ESPHome Packages and Substitutions"
+sidebarTitle: "Packages"
+description: "Use ESPHome substitutions and packages to create reusable, modular YAML configurations. Covers variable substitution, local and remote packages."
+---
+
+When you manage more than a handful of ESPHome devices, copy-pasting the same Wi-Fi credentials, API keys, or sensor definitions into every YAML file quickly becomes a maintenance burden. ESPHome solves this with two complementary tools: **substitutions** (named variables you embed in YAML values) and **packages** (reusable YAML files you include and merge). Together they let you build a single source of truth for shared config while keeping per-device differences minimal and explicit.
+
+## Substitutions
+
+A substitution is a named variable whose value is injected wherever `${variable_name}` appears in your YAML before ESPHome validates or compiles it.
+
+### Declaring Substitutions
+
+```yaml
+substitutions:
+  device_name: living-room-sensor
+  temp_offset: "-1.5"
+  update_interval: 30s
+
+esphome:
+  name: ${device_name}
+
+sensor:
+  - platform: bme280_i2c
+    temperature:
+      name: "${device_name} Temperature"
+      filters:
+        - offset: ${temp_offset}
+      update_interval: ${update_interval}
+```
+
+Both `$variable_name` and `${variable_name}` are valid; the braced form is recommended because it cannot be ambiguous next to adjacent text.
+
+### Substitution Types
+
+Substitution values can be any valid YAML type — strings, numbers, booleans, or even complex objects:
+
+```yaml
+substitutions:
+  device:
+    name: Kitchen AC
+    port: 12
+    enabled: true
+  api_key: "abc123"
+  sensor_pin:
+    number: 4
+    inverted: true
+```
+
+Access nested values with dot notation or index syntax inside Jinja expressions:
+
+```yaml
+esphome:
+  name: ${ device.name | lower | replace(" ", "-") }
+
+binary_sensor:
+  - platform: gpio
+    name: "Sensor on pin ${ sensor_pin.number }"
+    pin: ${sensor_pin}
+```
+
+### Jinja Expressions
+
+ESPHome supports simple [Jinja](https://jinja.palletsprojects.com/en/stable/templates/#expressions) expressions inside `${ ... }`, including arithmetic, conditionals, and filters:
+
+```yaml
+substitutions:
+  native_width: 480
+  native_height: 320
+  high_dpi: true
+  scale: 1.5
+
+display:
+  - platform: ili9xxx
+    dimensions:
+      width: ${native_width * 2 if high_dpi else native_width}
+      height: ${native_height * 2 if high_dpi else native_height}
+```
+
+Python's `math` library is also available: `${math.sqrt(x*x + y*y)}`.
+
+### Command-Line Overrides
+
+Override any substitution at compile time with `-s KEY VALUE`. You can supply `-s` multiple times:
+
+```bash
+# Compile with a different device name
+esphome -s device_name porch-sensor run sensor-base.yaml
+
+# Multiple overrides
+esphome -s device_name garage -s temp_offset "-2.0" run sensor-base.yaml
+```
+
+Command-line substitutions take precedence over those declared in the YAML file. This makes it easy to maintain a single "template" YAML and stamp out unique devices from CI or a script:
+
+```yaml
+# sensor-base.yaml — used for all temperature sensors
+substitutions:
+  device_name: placeholder     # always overridden from CLI
+  temp_offset: "0.0"
+
+esphome:
+  name: ${device_name}
+
+sensor:
+  - platform: bme280_i2c
+    address: 0x76
+    temperature:
+      name: "${device_name} Temperature"
+      filters:
+        - offset: ${temp_offset}
+```
+
+```bash
+esphome -s device_name kitchen -s temp_offset "-1.0" run sensor-base.yaml
+esphome -s device_name bedroom run sensor-base.yaml
+```
+
+## Packages
+
+Packages let you split your ESPHome configuration across multiple YAML files and merge them together at build time. All definitions from packages are merged **non-destructively**: dictionaries merge key-by-key, component lists merge by ID, and plain values from the main file take priority over those in packages.
+
+### Local Packages
+
+Break shared config into separate files and include them under `packages:`:
+
+```yaml
+# config/wifi.yaml
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+```
+
+```yaml
+# config/base.yaml
+esphome:
+  name: ${node_name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+```
+
+```yaml
+# living-room.yaml  — device-specific file
+substitutions:
+  node_name: living-room
+
+packages:
+  - !include config/wifi.yaml
+  - !include config/base.yaml
+
+sensor:
+  - platform: bme280_i2c
+    temperature:
+      name: "Living Room Temperature"
+    humidity:
+      name: "Living Room Humidity"
+```
+
+<Tip>
+Hide shared base files from the ESPHome dashboard by placing them in a subdirectory (the dashboard only lists files in the top-level directory) or by prefixing their names with a dot, e.g. `.base.yaml`.
+</Tip>
+
+### Packages as Templates with Variables
+
+Because packages are loaded via `!include`, you can pass variables to them — turning a package into a parameterised template. Multiple garage doors sharing one template:
+
+```yaml
+# garage-door.yaml  — template package
+switch:
+  - platform: gpio
+    name: "${door_name} Garage Door Switch"
+    id: ${door_name}_switch
+    pin: ${door_pin}
+
+cover:
+  - platform: time_based
+    name: "${door_name} Garage Door"
+    open_action:
+      - switch.turn_on: ${door_name}_switch
+    open_duration: 30s
+    close_action:
+      - switch.turn_on: ${door_name}_switch
+    close_duration: 32s
+    stop_action:
+      - switch.turn_off: ${door_name}_switch
+```
+
+```yaml
+# home.yaml
+packages:
+  left_door: !include
+    file: garage-door.yaml
+    vars:
+      door_name: left
+      door_pin: GPIO16
+  right_door: !include
+    file: garage-door.yaml
+    vars:
+      door_name: right
+      door_pin: GPIO17
+```
+
+### Remote (Git) Packages
+
+Packages can be fetched directly from a Git repository. This is ideal for distributing shared configurations across a team or publishing reusable ESPHome libraries:
+
+```yaml
+packages:
+  # Shorthand: github://username/repository/path/file.yaml[@ref]
+  shared_base: github://my-org/esphome-common/base.yaml@main
+
+  # Full form with multiple files and a refresh interval
+  sensors:
+    url: https://github.com/my-org/esphome-common
+    files:
+      - sensors/bme280.yaml
+      - sensors/motion.yaml
+    ref: v2.1.0
+    refresh: 1d    # re-fetch from GitHub at most once per day
+```
+
+<Warning>
+Remote packages cannot use `!secret` lookups — secrets are only available in the local config directory. Use substitutions with defaults in your remote package, and provide the actual values via the local YAML's `substitutions:` block.
+</Warning>
+
+### Dynamic File Selection with Substitutions
+
+The filename in a `!include` can itself contain substitution expressions, letting you switch between hardware-specific files based on a variable:
+
+```yaml
+# config.yaml
+substitutions:
+  platform: esp32   # change to esp8266 for older boards
+
+packages:
+  hardware: !include device-${platform}.yaml
+```
+
+```yaml
+# device-esp32.yaml
+substitutions:
+  LED_GPIO: GPIO2
+esp32:
+  board: esp32dev
+```
+
+```yaml
+# device-esp8266.yaml
+substitutions:
+  LED_GPIO: GPIO2
+esp8266:
+  board: nodemcuv2
+```
+
+### Extending and Removing Package Entries
+
+Use `!extend <id>` to override specific fields of a component defined in a package, without duplicating the entire block:
+
+```yaml
+# common.yaml
+sensor:
+  - platform: uptime
+    id: uptime_sensor
+    update_interval: 5min
+```
+
+```yaml
+# fast-device.yaml  — need more frequent updates
+packages:
+  - !include common.yaml
+
+sensor:
+  - id: !extend uptime_sensor
+    update_interval: 10s    # overrides the package value
+```
+
+Remove a package component entirely with `!remove`:
+
+```yaml
+packages:
+  - !include common.yaml
+
+# This device doesn't need the uptime sensor
+sensor:
+  - id: !remove uptime_sensor
+```
+
+### YAML Merge Key (`<<: !include`)
+
+For a simpler single-file inheritance pattern, use the YAML merge operator:
+
+```yaml
+# .base.yaml
+esphome:
+  name: ${devicename}
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+api:
+ota:
+  - platform: esphome
+```
+
+```yaml
+# kitchen.yaml
+substitutions:
+  devicename: kitchen
+
+<<: !include .base.yaml
+
+sensor:
+  - platform: bme280_i2c
+    temperature:
+      name: "Kitchen Temperature"
+```
+
+<Note>
+The `<<: !include` merge operator does **not** support substitution expressions in the filename. Use the `packages:` key with `!include` if you need dynamic filenames.
+</Note>
+
+## Pattern: Board-Specific Substitutions
+
+A common pattern for devices with different ESP variants is to keep all the hardware-specific details in a substitutions block and the shared application logic in a package:
+
+```yaml
+# esp32-node.yaml
+substitutions:
+  node_name: my-esp32-node
+  board: esp32dev
+  platform: esp32
+  status_led_pin: GPIO2
+
+packages:
+  app: !include shared-app.yaml
+
+esp32:
+  board: ${board}
+  framework:
+    type: esp-idf
+```
+
+```yaml
+# shared-app.yaml
+api:
+ota:
+  - platform: esphome
+
+light:
+  - platform: status_led
+    name: "Status LED"
+    pin: ${status_led_pin}
+
+sensor:
+  - platform: wifi_signal
+    name: "${node_name} Wi-Fi Signal"
+    update_interval: 60s
+```
+
+## See Also
+
+- [Substitutions Component Reference](/guides/packages-substitutions)
+- [Packages Component Reference](/guides/packages-substitutions)
+- [YAML `!include` Reference](/guides/yaml-configuration)
+- [Command-Line Interface](/reference/cli)

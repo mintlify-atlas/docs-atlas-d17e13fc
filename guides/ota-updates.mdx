@@ -1,0 +1,221 @@
+---
+title: "Over-the-Air Firmware Updates with ESPHome"
+sidebarTitle: "OTA Updates"
+description: "Configure OTA (over-the-air) firmware updates in ESPHome. Covers safe mode, update passwords, HTTP OTA, and troubleshooting failed updates."
+---
+
+Over-the-Air (OTA) updates let you flash new firmware to your ESPHome devices across your local network — no USB cable required after the first flash. ESPHome ships with a flexible OTA system built around **platforms**: each platform is an independent update channel with its own transport and security model. This guide covers the most common OTA scenarios and how to recover when things go wrong.
+
+## How OTA Works in ESPHome
+
+When you run `esphome run` or click **Install** in the dashboard, ESPHome compiles your YAML into a firmware binary and transfers it to the device over the network using the OTA protocol you have configured. The device verifies the upload, writes it to the inactive flash partition, and reboots into the new firmware.
+
+Since ESPHome 2024.6.0, OTA is a **platform component** — you select one or more transport mechanisms under the `ota:` key.
+
+## Basic OTA Configuration
+
+The `esphome` platform is the default OTA transport used by the dashboard and CLI:
+
+```yaml
+ota:
+  - platform: esphome
+```
+
+That single block is enough to enable OTA for most setups. If you are using the ESPHome Device Builder add-on in Home Assistant, this platform is automatically configured for you.
+
+## Adding an OTA Password
+
+Protect your OTA endpoint so only authorised users can push firmware:
+
+```yaml
+ota:
+  - platform: esphome
+    password: !secret ota_password
+```
+
+Store the password in your `secrets.yaml` file:
+
+```yaml
+# secrets.yaml
+ota_password: "a-very-long-random-string"
+```
+
+<Warning>
+If you add a password to a device that previously had none, the first upload must still succeed before the password takes effect. After that, every subsequent OTA attempt must supply the correct password — otherwise the device will reject it.
+</Warning>
+
+## Uploading Firmware
+
+<Steps>
+
+### Compile and upload with the CLI
+
+```bash
+# Compile, then upload over OTA automatically
+esphome run my-device.yaml
+
+# Or as two separate steps:
+esphome compile my-device.yaml
+esphome upload my-device.yaml
+```
+
+### Upload from the dashboard
+
+Click your device card in the ESPHome Device Builder, then click **Install → Wirelessly**. The dashboard handles compilation and upload automatically.
+
+### Monitor progress
+
+While an upload is in progress you can watch the serial or network logs:
+
+```bash
+esphome logs my-device.yaml
+```
+
+</Steps>
+
+## OTA Automations
+
+You can attach automations to OTA lifecycle events to provide visual or audible feedback:
+
+```yaml
+ota:
+  - platform: esphome
+    on_begin:
+      then:
+        - logger.log: "OTA update starting"
+        - light.turn_on:
+            id: status_led
+            effect: "Pulse"
+
+    on_progress:
+      then:
+        - logger.log:
+            format: "OTA progress: %.1f%%"
+            args: ["x"]
+
+    on_end:
+      then:
+        - logger.log: "OTA complete — rebooting"
+        - light.turn_off: status_led
+
+    on_error:
+      then:
+        - logger.log:
+            format: "OTA failed with error code %d"
+            args: ["x"]
+        - light.turn_on:
+            id: status_led
+            red: 1.0
+            green: 0.0
+            blue: 0.0
+```
+
+<Note>
+OTA updates block the main application loop while running. Avoid automation actions that require the loop to run (e.g., display updates driven by `loop()`). Keep `on_progress` actions short and fast — slow actions can cause the OTA transfer to time out.
+</Note>
+
+## Safe Mode
+
+Safe mode is ESPHome's built-in recovery mechanism. If the device fails to boot successfully a configurable number of times in a row, it automatically enters safe mode — a minimal firmware environment with only logging, networking, and OTA active. This gives you a window to push a fixed firmware without physically touching the device.
+
+Safe mode is **automatically enabled** when you include the `ota:` component. You can customise its behaviour:
+
+```yaml
+safe_mode:
+  num_attempts: 5          # enter safe mode after 5 failed boots (default: 10)
+  boot_is_good_after: 2min # consider boot successful after 2 min uptime (default: 1min)
+  reboot_timeout: 10min    # reboot out of safe mode after 10 min (default: 5min)
+```
+
+You can also add a hardware button that forces safe mode on demand:
+
+```yaml
+button:
+  - platform: safe_mode
+    name: "Enter Safe Mode"
+```
+
+<Tip>
+If a device is stuck in a crash loop, ESPHome will automatically enter safe mode after `num_attempts` failures. Connect to it with `esphome logs` to confirm it is in safe mode, then push a corrected firmware image.
+</Tip>
+
+## HTTP OTA — Pull Updates from a URL
+
+The `http_request` OTA platform lets your device fetch its own firmware update from a remote web server. This is useful for fleet management, staged rollouts, or offline-first deployments where you host firmware on a local server.
+
+```yaml
+ota:
+  - platform: esphome          # keep native OTA for manual pushes
+  - platform: http_request
+    id: ota_http
+
+http_request:
+  useragent: esphome/my-device
+
+button:
+  - platform: template
+    name: "Check for Update"
+    on_press:
+      then:
+        - ota.http_request.flash:
+            md5_url: http://192.168.1.100/firmware/my-device.md5
+            url: http://192.168.1.100/firmware/my-device.bin
+```
+
+The device downloads the firmware binary from `url` and verifies its integrity against the MD5 hash at `md5_url` before writing to flash.
+
+<Warning>
+When using `http_request` OTA over plain HTTP, the firmware is not encrypted in transit. Use this only on a trusted local network, or configure an HTTPS server with a valid certificate.
+</Warning>
+
+## Web Server OTA
+
+The `web_server` platform exposes an upload endpoint through the device's built-in HTTP server, letting you flash from a browser or from the CLI with `--ota-platform web_server`:
+
+```yaml
+web_server:
+  port: 80
+
+ota:
+  - platform: esphome
+  - platform: web_server
+```
+
+```bash
+# Upload via web server OTA from the CLI:
+esphome upload --ota-platform web_server my-device.yaml
+```
+
+## Troubleshooting OTA Failures
+
+<Accordion title="OTA upload times out or connection is refused">
+- Confirm the device is online: `ping <device-hostname>.local`
+- Check that the correct OTA password is configured in both the device YAML and your CLI/dashboard.
+- Make sure the device and your computer are on the same network segment. OTA uses mDNS for hostname resolution; it may not work across VLANs or subnets without an mDNS repeater.
+- Look at device logs (`esphome logs my-device.yaml`) and search for `OTA` to see what the device reports.
+</Accordion>
+
+<Accordion title="Device crashes immediately after OTA">
+If the new firmware crashes on boot, ESPHome's safe mode will automatically kick in after `num_attempts` failures. While in safe mode, the device accepts OTA uploads — push a corrected build.
+
+If safe mode is not reachable, you will need to flash via USB.
+</Accordion>
+
+<Accordion title="'Wrong password' error even with the correct password">
+The password in your YAML must exactly match the one compiled into the running firmware. If you changed the password in your YAML since the last upload, the device still expects the old password. Temporarily add the old password to your secrets, upload successfully, then change to the new password and upload again.
+</Accordion>
+
+<Accordion title="OTA succeeds but device still runs old firmware">
+The device may have failed to reboot after a successful upload. Check if the device is reachable and manually reboot it via Home Assistant or `esphome run` with a power-cycle fallback.
+</Accordion>
+
+<Accordion title="Out-of-memory during OTA on ESP8266">
+ESP8266 has very limited RAM. Close any open connections to the device (e.g., the log viewer in the dashboard) before starting an OTA upload to free up as much heap as possible.
+</Accordion>
+
+## See Also
+
+- [Safe Mode Component](/guides/ota-updates)
+- [OTA Component Reference](/components/ota/)
+- [Web Server Component](/components/web-server)
+- [Troubleshooting Guide](/guides/troubleshooting/)

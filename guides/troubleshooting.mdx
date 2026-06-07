@@ -1,0 +1,323 @@
+---
+title: "Troubleshooting ESPHome Devices and Crashes"
+sidebarTitle: "Troubleshooting"
+description: "Debug ESPHome devices: read crash backtraces, decode stack traces, fix OTA failures, Wi-Fi issues, and common compilation errors."
+---
+
+When an ESPHome device crashes, misbehaves, or refuses to connect, the right tools can dramatically shorten the time from "something is wrong" to "it's fixed." This guide covers crash backtrace capture, stack trace decoding, verbose logging configuration, and solutions to the most common failure modes — Wi-Fi dropouts, OTA timeouts, out-of-memory errors, and watchdog resets.
+
+## Getting Crash Backtraces
+
+### Automatic Crash Reporting (No USB Required)
+
+ESPHome automatically captures crash backtraces and stores them across software resets on **ESP32**, **ESP8266**, and **RP2040**. After a crash and reboot, the backtrace is logged at startup and decoded automatically when you connect via `esphome logs`. No serial cable is needed.
+
+<Note>
+On ESP32, automatic crash reporting requires the ESP-IDF framework (the default). It is **not** available when using the Arduino framework on ESP32. On ESP8266 and RP2040, crash reporting is always available regardless of framework.
+</Note>
+
+<Steps>
+
+### Compile and upload locally
+
+Decoded backtraces require debug symbols from the same build that is running on the device. Always compile locally before trying to capture crash data:
+
+```bash
+esphome compile my-device.yaml
+esphome upload my-device.yaml
+```
+
+### Connect to logs after the crash
+
+After the device crashes and reboots, connect immediately — crash data survives software resets but is lost on a power cycle:
+
+```bash
+esphome logs my-device.yaml
+```
+
+### Read the decoded backtrace
+
+The crash report appears automatically at boot:
+
+```log
+[12:31:55][E][esp32.crash:221]: *** CRASH DETECTED ON PREVIOUS BOOT ***
+[12:31:55][E][esp32.crash:224]:   Reason: Fault - StoreProhibited
+[12:31:55][E][esp32.crash:228]:   PC:  0x4011AD40  (fault location)
+WARNING Decoded 0x4011AD40: setup()::{lambda()#1}::_FUN() at my-device.yaml:89
+[12:31:55][E][esp32.crash:242]:   BT0: 0x4011AD3D  (backtrace)
+WARNING Decoded 0x4011AD3D: setup()::{lambda()#1}::_FUN() at my-device.yaml:89
+[12:31:55][E][esp32.crash:242]:   BT1: 0x4011AD95  (backtrace)
+WARNING Decoded 0x4011AD95: esphome::StatelessLambdaAction<>::play()
+[12:31:55][E][esp32.crash:242]:   BT2: 0x4011AD77  (backtrace)
+WARNING Decoded 0x4011AD77: esphome::Action<>::play_complex()
+```
+
+The decoded output shows the exact function, source file, and line number where the crash occurred.
+
+</Steps>
+
+<Warning>
+You must use `esphome logs` (the ESPHome CLI) or the ESPHome Device Builder to get decoded stack traces. Generic serial monitors and the Home Assistant log viewer show raw memory addresses that you would have to decode manually.
+</Warning>
+
+### Serial Console Stack Trace
+
+When you need the full register dump or cannot reach the device over the network, connect via USB and let `esphome logs` decode the crash in real time:
+
+```bash
+# Connect via USB serial port
+esphome logs my-device.yaml --device /dev/ttyUSB0
+```
+
+Example output when a watchdog triggers:
+
+```log
+[08:17:06]E (5906) task_wdt: Task watchdog got triggered.
+[08:17:06]E (5906) task_wdt:  - loopTask (CPU 0)
+[08:17:06]Backtrace: 0x4013d30e:0x3ffbac20 0x4013d383:0x3ffbac40
+WARNING Found stack trace! Trying to decode it
+WARNING Decoded 0x4013d30e: touch_pad_filter_cb at touch_sensor.c:365
+WARNING Decoded 0x4013d383: timer_task at esp_timer.c:482
+```
+
+### Alternative: Web-Based Stack Trace Decoder
+
+If you already have an undecoded backtrace and cannot use the CLI, use the [ESP Stack Trace Decoder](https://esphome.github.io/esp-stacktrace-decoder/) web tool:
+
+<Steps>
+
+### Download the ELF file
+
+In the ESPHome Device Builder, click the three-dot menu on your device card and select **Download .elf file**. This file contains the debug symbols for your last local build.
+
+### Open the decoder
+
+Navigate to [https://esphome.github.io/esp-stacktrace-decoder/](https://esphome.github.io/esp-stacktrace-decoder/).
+
+### Upload and decode
+
+Upload the `.elf` file, paste the raw backtrace into the text area, and click **Decode Stack Trace**. The tool runs entirely in your browser — no data is sent to any server.
+
+</Steps>
+
+<Note>
+The `.elf` file must be from the **same compilation** as the firmware currently running on the device. If you have recompiled since flashing, the debug symbols will not match and decoding will produce incorrect results.
+</Note>
+
+## Adjusting Log Levels for Debugging
+
+Increasing log verbosity is often the fastest way to understand what a component is doing (or failing to do).
+
+### Global Log Level
+
+```yaml
+logger:
+  level: VERBOSE    # or VERY_VERBOSE for maximum detail
+```
+
+| Level | What is logged |
+|---|---|
+| `NONE` | Nothing |
+| `ERROR` | Only fatal errors |
+| `WARN` | Errors and warnings |
+| `INFO` | General informational messages |
+| `DEBUG` | Debug output (default) |
+| `VERBOSE` | Detailed per-component trace |
+| `VERY_VERBOSE` | All internal messages including I²C/SPI bus traffic |
+
+<Warning>
+`VERY_VERBOSE` generates a very high volume of log messages and can slow down your device enough to cause Wi-Fi disconnects or missed sensor readings. Use it only for short debugging sessions.
+</Warning>
+
+### Per-Component Log Level
+
+Narrow logging to a specific component to reduce noise:
+
+```yaml
+logger:
+  level: WARN          # quiet by default
+  logs:
+    sensor: DEBUG      # verbose for the sensor subsystem only
+    wifi: VERBOSE      # maximum detail for Wi-Fi
+    bme280.sensor: DEBUG
+```
+
+### ESP-IDF Framework Log Level
+
+When using the ESP-IDF framework on ESP32, you can also set the framework's internal log level independently:
+
+```yaml
+esp32:
+  framework:
+    type: esp-idf
+    log_level: VERBOSE    # Options: NONE, ERROR, WARN, INFO, DEBUG, VERBOSE
+```
+
+## Common Issues
+
+<Accordion title="Wi-Fi not connecting / node keeps reconnecting">
+Random Wi-Fi disconnects are usually caused by signal quality, power supply issues, or access point configuration. Try these steps in order:
+
+1. **Enable fast_connect** if you use a hidden SSID, or as a general improvement:
+   ```yaml
+   wifi:
+     ssid: !secret wifi_ssid
+     password: !secret wifi_password
+     fast_connect: true
+   ```
+
+2. **Assign a static IP** to avoid DHCP timing issues:
+   ```yaml
+   wifi:
+     manual_ip:
+       static_ip: 192.168.1.50
+       gateway: 192.168.1.1
+       subnet: 255.255.255.0
+   ```
+
+3. **Reduce Wi-Fi transmit power** to lower current spikes (especially useful on battery or cheap USB adapters):
+   ```yaml
+   wifi:
+     output_power: 13dB    # default is 20dB
+   ```
+
+4. **Adjust power-save mode** — try `light` or `none`:
+   ```yaml
+   wifi:
+     power_save_mode: light
+   ```
+
+5. Check for `reboot_timeout` — ESPHome reboots if the API or MQTT connection is lost for too long. Increase or disable it for offline-first devices:
+   ```yaml
+   api:
+     reboot_timeout: 0s    # disable automatic reboot on API loss
+   ```
+</Accordion>
+
+<Accordion title="OTA update times out or fails">
+- Verify the device is reachable: `ping <hostname>.local`
+- Check that the OTA password in your YAML matches the one compiled into the running firmware.
+- Ensure you are on the same network subnet as the device — OTA uses mDNS for host resolution.
+- Close all other connections to the device (log viewer, Home Assistant) before uploading; this frees heap memory, especially important on ESP8266.
+- If the device is in safe mode, it will still accept OTA — push a corrected firmware image.
+
+See the [OTA Updates guide](/guides/ota-updates/) for a detailed troubleshooting section.
+</Accordion>
+
+<Accordion title="Out of memory / heap exhaustion on ESP8266">
+ESP8266 has only ~80 KB of usable RAM. Symptoms include random crashes, failed OTA uploads, and log messages like `malloc failed`.
+
+Reduce memory usage:
+- Set the logger level to `WARN` or higher in production.
+- Avoid large string operations in lambdas.
+- Disable unused components (captive portal, web server).
+- Consider migrating to an ESP32-C3, which offers ~5× the RAM at a similar price point.
+
+```yaml
+logger:
+  level: WARN    # reduces log buffer memory usage
+```
+</Accordion>
+
+<Accordion title="Watchdog timeout / task_wdt triggered">
+A watchdog timeout means some code blocked the main loop for too long. Common causes:
+
+- A `delay()` call in a lambda (use `delay:` as a YAML action instead, which is async).
+- A blocking I²C or SPI operation.
+- A slow `while:` loop without a `delay` action inside.
+
+Check the decoded stack trace — it will tell you exactly which function blocked. Enable Runtime Stats to find the offending component:
+
+```yaml
+runtime_stats:
+  log_interval: 60s
+```
+
+Then look at the `max` column in the output to find which component takes the most time per loop iteration.
+</Accordion>
+
+<Accordion title="Component took a long time for an operation">
+```log
+[W][component:511]: Component sensor.my_sensor took a long time for an operation (85 ms), max is 30 ms
+```
+
+This warning means a component blocked the loop for longer than the allowed maximum. While it was blocked, no other components could run. Severe cases trigger watchdog resets.
+
+This is wall time (not CPU time). On single-core chips (ESP32-C3, C2, H2), FreeRTOS system tasks can preempt the loop and inflate the measurement. Enable Runtime Stats to get a clearer picture.
+</Accordion>
+
+<Accordion title="Brownout detector was triggered">
+The ESP32's brownout detector fires when supply voltage drops below a safe threshold — usually during Wi-Fi transmit bursts that draw 300–500 mA.
+
+**Fixes, in order of effectiveness:**
+
+1. Reduce Wi-Fi transmit power:
+   ```yaml
+   wifi:
+     output_power: 13dB
+   ```
+
+2. Lower the CPU frequency:
+   ```yaml
+   esp32:
+     cpu_frequency: 160MHz
+   ```
+
+3. Use a quality 5V/2A power supply with a short, thick USB cable.
+
+4. Add a 100–1000 µF electrolytic capacitor across the 3.3 V and GND pins.
+</Accordion>
+
+<Accordion title="Compilation errors in lambdas">
+ESPHome passes lambda content directly to the C++ compiler without pre-validation. Common mistakes:
+
+- **Missing semicolons** — every C++ statement must end with `;`
+- **Wrong type** — `id(some_sensor).state` returns a `float`, not an `int`
+- **Missing `return` in a condition lambda** — condition lambdas must `return true;` or `return false;`
+
+When a lambda fails to compile, open the generated source for the exact error:
+```bash
+cat <NODE_NAME>/src/main.cpp
+```
+
+Or look at the full PlatformIO build output:
+```bash
+esphome compile my-device.yaml 2>&1 | grep error
+```
+</Accordion>
+
+## Debug Component
+
+The `debug:` component logs detailed device information at boot — heap size, flash chip details, reset reason, and loop timing — useful for diagnosing intermittent issues:
+
+```yaml
+debug:
+  update_interval: 5s    # log diagnostics every 5 seconds
+```
+
+It also exposes sensors you can forward to Home Assistant:
+
+```yaml
+sensor:
+  - platform: debug
+    free_heap:
+      name: "Free Heap"
+    loop_time:
+      name: "Loop Time"
+
+text_sensor:
+  - platform: debug
+    device:
+      name: "Device Info"
+    reset_reason:
+      name: "Reset Reason"
+```
+
+## See Also
+
+- [Logger Component](/components/logger/)
+- Debug Component
+- Runtime Statistics
+- [Safe Mode Component](/guides/ota-updates)
+- [OTA Updates Guide](/guides/ota-updates/)
+- [Frequently Asked Questions](/guides/faq/)

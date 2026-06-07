@@ -1,0 +1,184 @@
+---
+title: "ESPHome Core Configuration Reference"
+sidebarTitle: "Core (esphome:)"
+description: "Configure the ESPHome core block: device name, friendly_name, area, build options, includes, libraries, and project metadata."
+---
+
+The `esphome:` block is the mandatory top-level section of every ESPHome YAML configuration. It tells ESPHome the identity of your device — its network name, human-readable label, and area in Home Assistant — as well as advanced build-time settings such as custom C++ includes, extra libraries, PlatformIO overrides, and project metadata for creator workflows. Every other component in your config depends on this block being present and correctly filled out.
+
+## Minimal Example
+
+```yaml
+esphome:
+  name: livingroom
+  friendly_name: Living Room Controller
+  area: Living Room
+```
+
+## Configuration Variables
+
+<ParamField path="name" type="string" required>
+  The unique network hostname of the device. May only contain lowercase letters, digits, and hyphens. Maximum 24 characters when `name_add_mac_suffix` is `true`, or 31 characters when it is `false`. This name is used for mDNS, OTA uploads, and the ESPHome dashboard.
+</ParamField>
+
+<ParamField path="friendly_name" type="string">
+  A human-readable display name sent to Home Assistant. Used as the integration and device name, and prefixed to entity names where needed. Strongly recommended for a polished Home Assistant experience.
+</ParamField>
+
+<ParamField path="area" type="string or Area Configuration">
+  Assigns the device to a Home Assistant area/zone. Accepts either a simple string (`"Living Room"`) or a structured mapping with `id` and `name` keys for use with sub-devices.
+</ParamField>
+
+<ParamField path="comment" type="string">
+  Freeform text displayed in the ESPHome dashboard UI. Has no effect on the compiled firmware.
+</ParamField>
+
+<ParamField path="name_add_mac_suffix" type="boolean">
+  When `true`, appends the last 3 bytes of the device MAC address to the name as `-aabbcc`. Useful for flashing multiple identical devices from a single firmware binary. Defaults to `false`.
+</ParamField>
+
+<ParamField path="min_version" type="string">
+  The minimum ESPHome version required to compile this configuration. Produces a friendly error message if an older version is used. Example: `2025.11.0`.
+</ParamField>
+
+<ParamField path="project" type="mapping">
+  Embeds creator project metadata into the firmware (exposed via logger, mDNS, and native API device info). The name must use the format `author_name.project_name`.
+
+  - **name** (**Required**, string): Project name in `author.project` format.
+  - **version** (**Required**, string): Semantic version string.
+  - **on_update** (*Optional*, Automation): Triggered when firmware version changes between boots.
+</ParamField>
+
+<ParamField path="build_path" type="string">
+  Override the directory where ESPHome stores the PlatformIO build files. Defaults to `.esphome/build/<NODE>`. The official Docker image uses `/build` when that volume is mounted.
+</ParamField>
+
+<ParamField path="platformio_options" type="mapping">
+  Additional key-value pairs injected into the `[env]` section of the generated `platformio.ini`. See the [PlatformIO documentation](https://docs.platformio.org/en/latest/projectconf/section_env.html) for available options.
+</ParamField>
+
+<ParamField path="environment_variables" type="mapping">
+  Environment variables available during the build process. Useful for passing configuration to build scripts or PlatformIO environments. **Not** available at device runtime.
+</ParamField>
+
+<ParamField path="includes" type="list of files">
+  C/C++ files or directories to copy into the generated PlatformIO `src/` folder. Header files (`.h`, `.hpp`) are also `#include`d in `main.cpp`. Paths are relative to the YAML file location.
+</ParamField>
+
+<ParamField path="includes_c" type="list of files">
+  Same as `includes` but wraps all files in `extern "C" {}` for C linkage compatibility.
+</ParamField>
+
+<ParamField path="libraries" type="list of libraries">
+  PlatformIO library dependencies to add to the project. Accepts the same syntax as PlatformIO's `lib_deps`. Use `<name>=<source>` to override a library version pulled in by an ESPHome component.
+</ParamField>
+
+<ParamField path="compile_process_limit" type="int">
+  Maximum number of simultaneous compile processes. Defaults to the number of CPU cores available (also the maximum).
+</ParamField>
+
+<ParamField path="areas" type="list">
+  Additional named areas for use by sub-devices. Each entry requires `id` (string) and `name` (string).
+</ParamField>
+
+<ParamField path="devices" type="list">
+  Sub-devices that group entities into separate logical devices in Home Assistant. Each entry requires `id` (string) and `name` (string), with an optional `area_id` referencing an entry in `areas`.
+</ParamField>
+
+### Automation Triggers
+
+<ParamField path="on_boot" type="Automation">
+  Triggered when the device starts. Use the `priority` sub-key (float) to control execution order. Higher priority = earlier execution. Key priorities: `800` hardware init, `600` sensors, `250` WiFi, `200` network connections, `-100` everything ready.
+</ParamField>
+
+<ParamField path="on_shutdown" type="Automation">
+  Triggered just before the device shuts down (caused by WiFi/MQTT failures, OTA updates, or deep sleep). Shutdown order is the **reverse** of boot priority. Not all components are guaranteed to be connected.
+</ParamField>
+
+<ParamField path="on_loop" type="Automation">
+  Triggered on every main loop iteration (approximately every 16 ms).
+</ParamField>
+
+## Advanced Example
+
+```yaml
+esphome:
+  name: kitchen-sensor
+  friendly_name: Kitchen Sensor Hub
+  area: Kitchen
+  comment: "Temp + humidity sensor with RF bridge"
+  name_add_mac_suffix: false
+  min_version: 2025.6.0
+
+  project:
+    name: "mycompany.kitchen_hub"
+    version: "2.1.0"
+    on_update:
+      - logger.log: "Firmware updated!"
+
+  platformio_options:
+    upload_speed: 921600
+    board_build.f_flash: 80000000L
+
+  includes:
+    - my_custom_driver.h
+
+  libraries:
+    - Wire
+    - plerup/EspSoftwareSerial @ ^8.1.0
+
+  on_boot:
+    - priority: -100
+      then:
+        - logger.log: "All components ready"
+
+  on_shutdown:
+    - logger.log: "Device shutting down"
+```
+
+## Preferences Component
+
+The `preferences:` top-level key controls how frequently persistent state (light states, globals, etc.) is written to flash memory.
+
+```yaml
+preferences:
+  flash_write_interval: 1min
+```
+
+<ParamField path="flash_write_interval" type="Time">
+  How often buffered state changes are flushed to flash. Defaults to `1min`. Set to `never` to disable, or `0s` to write immediately (increases flash wear). For ESP8266, `restore_from_flash: true` must also be set on the `esp8266:` component.
+</ParamField>
+
+## Sub-Devices and Areas Example
+
+```yaml
+esphome:
+  name: rf-bridge
+  area: "Utility Room"
+
+  areas:
+    - id: entrance_area
+      name: "Entrance"
+    - id: garage_area
+      name: "Garage"
+
+  devices:
+    - id: front_door_device
+      name: "Front Door Sensor"
+      area_id: entrance_area
+    - id: garage_door_device
+      name: "Garage Door"
+      area_id: garage_area
+```
+
+<Note>
+  When renaming a device, set `wifi.use_address` to the old hostname during the transition, then remove it after a successful OTA upload. This prevents losing network access mid-rename.
+</Note>
+
+<Tip>
+  Use `name_add_mac_suffix: true` together with a `project:` block when building firmware for distribution. End users can import the config via `dashboard_import` and OTA update without needing to build from source.
+</Tip>
+
+<Warning>
+  Setting `preferences.flash_write_interval: 0s` causes every state change to immediately write to flash. Flash memory has a limited number of write cycles — use this only for testing.
+</Warning>

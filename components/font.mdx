@@ -1,0 +1,247 @@
+---
+title: "Font Component: Render Text on ESPHome Displays"
+sidebarTitle: "Font"
+description: "Load TTF/BDF fonts and material design icons for ESPHome displays. Configure glyph sets, sizes, and anti-aliasing for pixel-perfect text rendering."
+---
+
+ESPHome's `font` component integrates directly with the display rendering engine and LVGL to give you full typographic control over how text appears on your screens. You can load any OpenType/TrueType (`.ttf`, `.otf`, `.woff`) font at any size, use fixed bitmap fonts (`.bdf`, `.pcf`), pull fonts directly from Google Fonts, or even embed Material Design icon glyphs alongside regular characters — all at compile time, with the resulting bitmaps stored in flash memory.
+
+## Minimal Example
+
+```yaml
+font:
+  - file: "fonts/Roboto-Regular.ttf"
+    id: font_20
+    size: 20
+
+display:
+  - platform: ...
+    lambda: |-
+      it.print(0, 0, id(font_20), "Hello, World!");
+```
+
+## Configuration Variables
+
+<ParamField path="file" type="string or object" required>
+  The font source. Can be:
+  - A local path relative to your YAML file: `"fonts/Roboto.ttf"`
+  - A Google Fonts shorthand: `"gfonts://Roboto"` or `"gfonts://Material+Symbols+Outlined"`
+  - A web URL: `"https://example.com/font.ttf"`
+  - A structured object (see below for `local`, `gfonts`, and `web` types).
+</ParamField>
+
+<ParamField path="id" type="ID" required>
+  The ID used to reference this font in your display lambda (e.g. `id(font_20)`).
+</ParamField>
+
+<ParamField path="size" type="int" optional>
+  The desired font height in pixels. Defaults to `20` for scalable fonts. For bitmap fonts, must match an available size in the file.
+</ParamField>
+
+<ParamField path="bpp" type="int" optional>
+  Bits per pixel for anti-aliasing. Values: `1` (no anti-aliasing, default), `2`, `4`, `8`. Higher values produce smoother text but use more flash and require specifying background color when drawing.
+</ParamField>
+
+<ParamField path="glyphs" type="list" optional>
+  Additional characters to include, beyond the default glyph set. Accepts single characters, strings, or Unicode escape sequences. Reduce this list to save flash space.
+</ParamField>
+
+<ParamField path="glyphsets" type="list" optional>
+  Named glyph sets to include. Defaults to `GF_Latin_Kernel` (basic ASCII + punctuation). Options include `GF_Latin_Core`, `GF_Cyrillic_Core`, `GF_Greek_Core`, `GF_Arabic_Core`, and many more.
+</ParamField>
+
+<ParamField path="extras" type="list" optional>
+  Additional TrueType/OpenType files to pull specific glyphs from (e.g. icon fonts mixed into a text font). Each entry needs `file` and `glyphs`.
+</ParamField>
+
+<ParamField path="ignore_missing_glyphs" type="boolean" optional>
+  If `true`, suppresses warnings for glyphs in `glyphsets` that are absent from the font file. Missing manually specified `glyphs` are always errors. Defaults to `false`.
+</ParamField>
+
+---
+
+## Font Source Types
+
+### Local File
+
+```yaml
+font:
+  - file: "fonts/Roboto-Regular.ttf"
+    id: roboto
+    size: 20
+```
+
+### Google Fonts (auto-downloaded and cached)
+
+```yaml
+font:
+  # Shorthand
+  - file: "gfonts://Roboto"
+    id: roboto_24
+    size: 24
+
+  # Structured form with weight
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: bold    # thin, extra-light, light, regular, medium, semi-bold, bold, extra-bold, black
+    id: roboto_bold
+    size: 20
+
+  # Material Symbols (Google icon font)
+  - file: "gfonts://Material+Symbols+Outlined"
+    id: icons_40
+    size: 40
+    glyphs:
+      - "\U0000e425"  # mdi:timer
+      - "\U0000e5cd"  # mdi:close
+```
+
+### Web Font (downloaded at build time)
+
+```yaml
+font:
+  - file: "https://github.com/IdreesInc/Monocraft/releases/download/v3.0/Monocraft.ttf"
+    id: monocraft
+    size: 16
+
+  # Structured form
+  - file:
+      type: web
+      url: "https://example.com/my-font.ttf"
+    id: web_font
+    size: 18
+```
+
+### Bitmap Fonts (BDF / PCF)
+
+```yaml
+font:
+  - file: "fonts/tom-thumb.bdf"
+    id: tiny_font
+    # size is fixed by the bitmap font; omit or match available size
+```
+
+---
+
+## Mixing Text and Icons
+
+Use `extras:` to embed icon font glyphs at the same size as your text font. This lets you render icons inline with text in a single `print()` call.
+
+```yaml
+font:
+  - file: "fonts/Roboto-Regular.ttf"
+    id: roboto_with_icons
+    size: 20
+    bpp: 4
+    extras:
+      - file: "fonts/materialdesignicons-webfont.ttf"
+        glyphs:
+          - "\U000F02D1"  # mdi:heart
+          - "\U000F05D4"  # mdi:airplane-landing
+          - "\U000F0594"  # mdi:weather-sunny
+
+display:
+  - platform: ...
+    lambda: |-
+      // Icons render inline with text
+      it.print(0, 0, id(roboto_with_icons), COLOR_ON,
+               "I \U000F02D1 ESPHome \U000F0594");
+```
+
+<Note>
+  For icon codepoints above `0xFFFF`, use capital `\U` followed by exactly 8 hex digits (e.g. `\U000F02D1`). For codepoints up to `0xFFFF`, use lowercase `\u` followed by exactly 4 hex digits.
+</Note>
+
+---
+
+## Anti-Aliasing
+
+Higher `bpp` values produce smoother text but require specifying a background color when drawing so the renderer can blend correctly.
+
+```yaml
+font:
+  - file: "gfonts://Roboto"
+    id: smooth_font
+    size: 28
+    bpp: 4
+
+display:
+  - platform: ...
+    lambda: |-
+      // With anti-aliasing, specify foreground and background color
+      it.print(0, 0, id(smooth_font), Color(255,255,255), COLOR_OFF,
+               TextAlign::TOP_LEFT, "Smooth text");
+```
+
+---
+
+## Glyph Sets for International Text
+
+Reduce flash usage by loading only the character ranges you need. The default `GF_Latin_Kernel` covers basic ASCII.
+
+```yaml
+font:
+  - file:
+      type: gfonts
+      family: Roboto
+    id: roboto_eu
+    size: 16
+    glyphsets:
+      - GF_Latin_Kernel   # always include for numbers/punctuation
+      - GF_Latin_Core     # extended Latin (Western Europe)
+      - GF_Cyrillic_Core  # Russian, Bulgarian, etc.
+      - GF_Greek_Core     # Greek alphabet
+```
+
+---
+
+## Font Metrics API
+
+Query font dimensions from lambdas for precise layout calculations.
+
+```cpp
+int baseline  = id(my_font).get_baseline();   // pixels from top to baseline
+int ascender  = id(my_font).get_ascender();   // height above baseline
+int descender = id(my_font).get_descender();  // depth below baseline
+int capheight = id(my_font).get_capheight();  // height of capital letters
+int xheight   = id(my_font).get_xheight();   // height of lowercase 'x'
+int height    = id(my_font).get_height();     // total line height
+```
+
+---
+
+## Advanced Example: Multi-Font Dashboard
+
+```yaml
+font:
+  - file: "gfonts://Roboto"
+    id: f_label
+    size: 12
+
+  - file: "gfonts://Roboto"
+    id: f_value
+    size: 32
+    bpp: 4
+
+  - file: "gfonts://Material+Symbols+Outlined"
+    id: f_icons
+    size: 24
+    glyphs:
+      - "\U0000e1ff"  # thermostat
+      - "\U0000e63e"  # water_drop
+
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    update_interval: 5s
+    lambda: |-
+      it.print(0, 0, id(f_label), "TEMPERATURE");
+      it.printf(0, 14, id(f_value), COLOR_ON, COLOR_OFF,
+                TextAlign::TOP_LEFT, "%.1f°", id(temp_sensor).state);
+      it.print(100, 14, id(f_icons), "\U0000e1ff");
+```
+
+<Note>
+  The `pillow` Python package must be installed for ESPHome to render font files at build time. It is pre-installed in the official ESPHome add-on and Docker images. For manual installs: `pip install "pillow==10.4.0"`.
+</Note>

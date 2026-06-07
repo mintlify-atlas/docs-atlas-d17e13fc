@@ -1,0 +1,257 @@
+---
+title: "ESPHome Native API: Protobuf TCP Protocol"
+sidebarTitle: "Native API"
+description: "The ESPHome native API uses protobuf over TCP on port 6053 for fast, encrypted communication with Home Assistant and aioesphomeapi clients."
+---
+
+The ESPHome native API is a custom binary TCP protocol built on [Protocol Buffers](https://protobuf.dev/) that provides highly efficient, low-latency communication between an ESPHome device and connected clients. Home Assistant uses this API exclusively for its ESPHome integration — no MQTT broker or additional middleware required. The Python library [aioesphomeapi](https://github.com/esphome/aioesphomeapi) implements the full protocol and is available for building custom integrations.
+
+## Enabling the Native API
+
+Add `api:` to your configuration. All options are optional — a bare `api:` block with no sub-keys is a valid and complete configuration for most use cases:
+
+```yaml
+# Minimal — recommended for most devices
+api:
+
+# Full configuration with all options
+api:
+  port: 6053
+  encryption:
+    key: "YOUR_BASE64_ENCRYPTION_KEY_HERE"
+  batch_delay: 100ms
+  max_connections: 5
+  reboot_timeout: 15min
+```
+
+After flashing, navigate to **Settings → Integrations** in Home Assistant. ESPHome devices announce themselves via mDNS and will appear in the **Discovered** section automatically within a few minutes. You can also add them manually by choosing **ESPHome** and entering `<node_name>.local` or the device IP.
+
+---
+
+## Protocol Overview
+
+The native API operates on **TCP port 6053**. The protocol is message-framed: each message is prefixed with its length (varint-encoded) followed by a protobuf message type identifier and the serialized payload. The full message schema is defined in:
+
+[`esphome/components/api/api.proto`](https://github.com/esphome/esphome/blob/dev/esphome/components/api/api.proto)
+
+A typical client session follows this sequence:
+
+<Steps>
+  ### Connect
+
+  The client opens a TCP connection to port 6053 and exchanges a hello/handshake message. If encryption is enabled, a Noise Protocol handshake occurs at this stage.
+
+  ### List Entities
+
+  The client sends a `ListEntitiesRequest`. The device responds with one message per configured entity — sensors, switches, lights, covers, etc. — describing each entity's name, unique ID, and capabilities.
+
+  ### Subscribe to States
+
+  After listing entities, the client sends a `SubscribeStatesRequest`. The device immediately sends the current state of every entity, then pushes state-change messages in real time whenever a value changes.
+
+  ### Call Actions
+
+  The client sends command messages such as `LightCommandRequest`, `SwitchCommandRequest`, or user-defined action calls to control the device. User-defined actions defined in YAML under `api: actions:` appear in Home Assistant as callable services prefixed with `esphome.<node_name>_`.
+
+  ### Disconnect
+
+  Either side may close the TCP connection at any time. The device will reboot if no client reconnects within `reboot_timeout` (default 15 minutes). Set `reboot_timeout: 0s` to disable this behavior.
+</Steps>
+
+---
+
+## Encryption
+
+The native API supports Noise Protocol encryption using a pre-shared 32-byte base64-encoded key. Enabling encryption is strongly recommended for production devices.
+
+```yaml
+api:
+  encryption:
+    key: "JpOu9bQJUUqz+3OHC9tSRDO5b3Vl2ZhXr5WekAoUP9Y="
+```
+
+<Tip>
+  Home Assistant will prompt for the encryption key when you add a device with encryption enabled. The key is stored in Home Assistant's configuration and sent during the Noise handshake automatically.
+</Tip>
+
+<Warning>
+  Do not commit your encryption key to public version control or share it in config files uploaded online. Use `secrets.yaml` to keep it private:
+
+  ```yaml
+  api:
+    encryption:
+      key: !secret api_encryption_key
+  ```
+</Warning>
+
+---
+
+## Configuration Variables
+
+<ParamField path="port" type="integer">
+  TCP port to listen on. Defaults to `6053`.
+</ParamField>
+
+<ParamField path="encryption.key" type="string">
+  A 32-byte base64-encoded string used as the Noise Protocol encryption key. Without this, all traffic is sent in plaintext.
+</ParamField>
+
+<ParamField path="batch_delay" type="time">
+  How long to accumulate state updates before sending them as a batch. Lower values reduce latency; higher values reduce network packets. Range: `0ms`–`65535ms`. Defaults to `100ms`. Set to `0ms` for maximum responsiveness (e.g., IR remote sensors with rapid ON→OFF transitions).
+</ParamField>
+
+<ParamField path="max_connections" type="integer">
+  Maximum simultaneous client connections. Defaults to 4 (ESP8266/RP2040) or 5 (ESP32). Each connection uses approximately 500–1000 bytes of RAM.
+</ParamField>
+
+<ParamField path="reboot_timeout" type="time">
+  Time to wait before rebooting if no client is connected. Compensates for cases where the ESP reports network connectivity when it actually has none. Set to `0s` to disable. Defaults to `15min`.
+</ParamField>
+
+<ParamField path="actions" type="list">
+  User-defined actions exposed to Home Assistant. See [User-defined Actions](/components/api#api-device-actions) in the component docs.
+</ParamField>
+
+---
+
+## Using aioesphomeapi
+
+[aioesphomeapi](https://github.com/esphome/aioesphomeapi) is the official Python client library for the native API. It is used internally by Home Assistant and by ESPHome's own `esphome logs` command.
+
+### Installation
+
+```bash
+pip install aioesphomeapi
+```
+
+### Connecting and Subscribing to States
+
+```python
+import asyncio
+import aioesphomeapi
+
+
+async def main():
+    # Connect to the device
+    api = aioesphomeapi.APIClient(
+        "living-room-sensor.local",
+        6053,
+        password=None,
+        noise_psk="JpOu9bQJUUqz+3OHC9tSRDO5b3Vl2ZhXr5WekAoUP9Y=",  # omit if no encryption
+    )
+
+    await api.connect(login=True)
+
+    # List all entities on the device
+    entities, services = await api.list_entities_services()
+    for entity in entities:
+        print(f"Entity: {entity.name} ({entity.__class__.__name__})")
+
+    # Subscribe to real-time state changes
+    def on_state_change(state):
+        print(f"State update: {state}")
+
+    await api.subscribe_states(on_state_change)
+
+    # Keep running and receiving updates
+    await asyncio.sleep(30)
+    await api.disconnect()
+
+
+asyncio.run(main())
+```
+
+### Controlling a Device
+
+```python
+import asyncio
+import aioesphomeapi
+
+
+async def main():
+    api = aioesphomeapi.APIClient("livingroom.local", 6053, password=None)
+    await api.connect(login=True)
+
+    # List entities to find the key for the light
+    entities, _ = await api.list_entities_services()
+    light_key = next(
+        e.key for e in entities
+        if hasattr(e, "name") and e.name == "Living Room Light"
+    )
+
+    # Turn the light on at 50% brightness
+    await api.light_command(
+        key=light_key,
+        state=True,
+        brightness=0.5,
+    )
+
+    await api.disconnect()
+
+
+asyncio.run(main())
+```
+
+### Streaming Logs
+
+The `aioesphomeapi-logs` CLI tool (bundled with ESPHome) provides log streaming without writing Python code:
+
+```bash
+# By IP
+aioesphomeapi-logs 192.168.1.100
+
+# By IPv6 address
+aioesphomeapi-logs fe80::cdef:0123:4567:89ab
+
+# With encryption
+aioesphomeapi-logs 192.168.1.100 --noise-psk <your-api-key>
+```
+
+---
+
+## Triggers and Conditions
+
+The native API exposes two useful automation hooks in ESPHome YAML:
+
+```yaml
+api:
+  on_client_connected:
+    - logger.log:
+        format: "Client %s connected from %s"
+        args: ["client_info.c_str()", "client_address.c_str()"]
+
+  on_client_disconnected:
+    - logger.log: "A client disconnected from the API"
+```
+
+The `api.connected` condition checks whether at least one client is currently connected:
+
+```yaml
+on_boot:
+  - wait_until:
+      condition:
+        api.connected:
+          state_subscription_only: true   # true = only count HA-style clients
+  - logger.log: "Home Assistant is connected"
+  - homeassistant.event:
+      event: esphome.device_booted
+```
+
+---
+
+## Native API vs. Web Server API
+
+| | Native API | Web Server API |
+|--|-----------|---------------|
+| Protocol | Custom TCP + protobuf | HTTP REST + SSE |
+| Port | 6053 | 80 (configurable) |
+| Encryption | Noise Protocol (optional) | HTTPS (optional) |
+| Efficiency | Very high — binary, batched | Moderate — text-based |
+| Home Assistant | ✅ Primary integration | ❌ Not used by default |
+| Custom scripts | aioesphomeapi (Python) | curl, fetch, any HTTP client |
+| Real-time push | ✅ Native state subscription | ✅ SSE at `/events` |
+| Best for | Home Assistant, performance | Web browsers, simple scripting |
+
+<Tip>
+  For the fastest and most reliable integration with Home Assistant, always use the native API. Use the web server API when you need to control a device from a browser, shell script, or a platform that cannot use Python/aioesphomeapi.
+</Tip>

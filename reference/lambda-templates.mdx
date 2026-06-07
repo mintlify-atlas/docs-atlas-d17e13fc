@@ -1,0 +1,317 @@
+---
+title: "Lambda and C++ Templates in ESPHome"
+sidebarTitle: "Lambda & Templates"
+description: "Write inline C++ Lambda expressions in ESPHome YAML for custom sensor filters, automation conditions, and actions beyond the built-in API."
+---
+
+Lambdas — also called *templates* — are inline C++ code blocks that you embed directly in your ESPHome YAML configuration. They allow you to go far beyond what the built-in actions, conditions, and filters support, expressing arbitrary logic wherever ESPHome accepts a templatable value. If you've never written C++ before, don't worry: the patterns you'll use in ESPHome lambdas are simple and highly repetitive once you've seen them a few times.
+
+---
+
+## The `!lambda` Tag
+
+The `!lambda` YAML tag tells ESPHome that the following indented block is C++ code rather than a YAML value. The `|-` block scalar strips trailing newlines and preserves indentation:
+
+```yaml
+lambda: !lambda |-
+  // This is C++ code
+  return some_value;
+```
+
+In most contexts where a `lambda:` key is used, the `!lambda` tag is implied and you can write `lambda: |-` directly. Both forms are equivalent.
+
+```yaml
+# These two are identical
+lambda: !lambda |-
+  return true;
+
+lambda: |-
+  return true;
+```
+
+<Note>
+  ESPHome does not validate lambda expressions during YAML parsing — it copies them verbatim into the generated C++ file. Syntax errors only surface during compilation. Check `<NODE_NAME>/src/main.cpp` when debugging lambda issues.
+</Note>
+
+---
+
+## Accessing Component State with `id()`
+
+The `id()` helper function retrieves any named ESPHome object by its `id:` value. From there you can access properties and call methods:
+
+| Expression | Returns | Description |
+|-----------|---------|-------------|
+| `id(my_sensor).state` | `float` | Current (filtered) sensor value |
+| `id(my_binary).state` | `bool` | Current binary sensor state |
+| `id(my_switch).state` | `bool` | Current switch state |
+| `id(my_text_sensor).state` | `std::string` | Current text sensor value |
+
+---
+
+## Lambdas in Automations
+
+In an automation `then:` block, the lambda runs for its side effects. The return type is `void`.
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    pin: GPIO0
+    name: "Button"
+    on_press:
+      then:
+        - lambda: |-
+            if (id(living_room_light).state) {
+              id(living_room_light).turn_off().perform();
+            } else {
+              auto call = id(living_room_light).turn_on();
+              call.set_brightness(0.8);
+              call.perform();
+            }
+```
+
+---
+
+## Lambdas in Sensor Filters
+
+Sensor filters that use `lambda:` must return a `float`. You receive the raw sensor value as the variable `x`:
+
+```yaml
+sensor:
+  - platform: adc
+    pin: A0
+    name: "Soil Moisture"
+    filters:
+      - lambda: |-
+          // Convert raw ADC voltage (0–3.3 V) to a percentage
+          // Dry = 3.3 V (0%), Wet = 1.0 V (100%)
+          float pct = (3.3f - x) / 2.3f * 100.0f;
+          return clamp(pct, 0.0f, 100.0f);
+      - sliding_window_moving_average:
+          window_size: 5
+```
+
+Return `NAN` from a sensor filter lambda to discard the reading:
+
+```yaml
+filters:
+  - lambda: |-
+      // Discard readings outside the plausible range
+      if (x < -40.0f || x > 125.0f) return NAN;
+      return x;
+```
+
+---
+
+## Lambdas in Conditions
+
+Condition lambdas must return `bool`. Use them inside `if:` actions or as automation conditions:
+
+```yaml
+on_press:
+  then:
+    - if:
+        condition:
+          lambda: |-
+            // Only act between 7 AM and 10 PM
+            auto now = id(ha_time).now();
+            return now.hour >= 7 && now.hour < 22;
+        then:
+          - switch.toggle: bedroom_light
+        else:
+          - logger.log: "Ignoring press — outside allowed hours"
+```
+
+---
+
+## Lambdas in Template Components
+
+Template components (template sensor, template cover, template binary sensor, etc.) compute their state entirely from a lambda. The return type must match what the component expects.
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    name: "Top End Stop"
+    id: top_end_stop
+
+cover:
+  - platform: template
+    name: "Living Room Cover"
+    lambda: |-
+      if (id(top_end_stop).state) {
+        return COVER_OPEN;
+      } else {
+        return COVER_CLOSED;
+      }
+    open_action:
+      - switch.turn_on: cover_open_relay
+    close_action:
+      - switch.turn_on: cover_close_relay
+    stop_action:
+      - switch.turn_off: cover_open_relay
+      - switch.turn_off: cover_close_relay
+```
+
+---
+
+## Publishing State from a Lambda
+
+Use `publish_state()` to push a new value to a component from within any lambda:
+
+```yaml
+sensor:
+  - platform: template
+    name: "Calculated Power"
+    id: power_sensor
+    unit_of_measurement: "W"
+    lambda: |-
+      float voltage = id(voltage_sensor).state;
+      float current = id(current_sensor).state;
+      return voltage * current;
+    update_interval: 5s
+```
+
+For binary sensors, switches, and other non-sensor components:
+
+```yaml
+interval:
+  - interval: 10s
+    then:
+      - lambda: |-
+          bool occupied = id(pir_sensor).state || id(radar_sensor).state;
+          id(room_occupied).publish_state(occupied);
+```
+
+---
+
+## Templating Action Parameters
+
+Any parameter marked "templatable" in the docs accepts a lambda that returns the appropriate type. This lets you drive action arguments from sensor readings:
+
+```yaml
+on_press:
+  then:
+    - light.turn_on:
+        id: status_light
+        transition_length: 0.5s
+        brightness: !lambda |-
+          // Set brightness proportional to ambient light sensor
+          return id(lux_sensor).state / 1000.0f;
+        red: 0.8
+        green: 1.0
+        blue: !lambda |-
+          return id(some_sensor).state / 100.0f;
+```
+
+---
+
+## Logging from Lambdas
+
+Use the ESP-IDF logging macros inside any lambda. The first argument is a tag string used to filter log output:
+
+```yaml
+lambda: |-
+  float temp = id(temperature_sensor).state;
+  ESP_LOGI("my_automation", "Current temperature: %.1f °C", temp);
+
+  if (temp > 30.0f) {
+    ESP_LOGW("my_automation", "High temperature warning: %.1f °C", temp);
+  }
+```
+
+| Macro | Log Level |
+|-------|-----------|
+| `ESP_LOGE(tag, fmt, ...)` | Error |
+| `ESP_LOGW(tag, fmt, ...)` | Warning |
+| `ESP_LOGI(tag, fmt, ...)` | Info |
+| `ESP_LOGD(tag, fmt, ...)` | Debug |
+| `ESP_LOGV(tag, fmt, ...)` | Verbose |
+
+---
+
+## Static Variables
+
+Static local variables inside a lambda retain their value between calls to the lambda — useful for counting events or implementing hysteresis:
+
+```yaml
+sensor:
+  - platform: template
+    name: "Press Count"
+    lambda: |-
+      static int count = 0;
+      count++;
+      ESP_LOGD("counter", "Lambda executed %d times", count);
+      return (float)count;
+    update_interval: 5s
+```
+
+---
+
+## Accessing ESP-IDF and Arduino APIs
+
+Inside a lambda you have full access to the ESP-IDF C API (and Arduino API if using the Arduino framework). This enables direct hardware access when no ESPHome component covers your use case:
+
+```yaml
+# Read a GPIO pin value directly via ESP-IDF
+lambda: |-
+  int level = gpio_get_level(GPIO_NUM_4);
+  ESP_LOGI("direct_gpio", "GPIO4 level: %d", level);
+  return (float)level;
+```
+
+```yaml
+# Read free heap memory and publish it as a sensor
+sensor:
+  - platform: template
+    name: "Free Heap"
+    unit_of_measurement: "bytes"
+    lambda: |-
+      return (float)esp_get_free_heap_size();
+    update_interval: 30s
+```
+
+---
+
+## Common Patterns Reference
+
+<CodeGroup>
+  ```yaml Map a value range
+  filters:
+    - lambda: |-
+        // Map 0–100 input to 0.0–1.0 output
+        return x / 100.0f;
+  ```
+
+  ```yaml Conditional state
+  lambda: |-
+    if (id(sensor_a).state > id(sensor_b).state) {
+      return id(sensor_a).state;
+    }
+    return id(sensor_b).state;
+  ```
+
+  ```yaml String formatting
+  text_sensor:
+    - platform: template
+      name: "Status"
+      lambda: |-
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.1f °C / %.0f%%",
+                 id(temp).state, id(humidity).state);
+        return std::string(buf);
+      update_interval: 10s
+  ```
+
+  ```yaml Debounce with static variable
+  binary_sensor:
+    - platform: template
+      name: "Debounced"
+      lambda: |-
+        static uint32_t last_change = 0;
+        uint32_t now = millis();
+        if (now - last_change > 200) {
+          last_change = now;
+          return id(raw_sensor).state;
+        }
+        return id(debounced_sensor).state;
+  ```
+</CodeGroup>

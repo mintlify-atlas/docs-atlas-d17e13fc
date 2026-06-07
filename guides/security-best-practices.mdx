@@ -1,0 +1,309 @@
+---
+title: "Security Best Practices for ESPHome Devices"
+sidebarTitle: "Security"
+description: "Secure your ESPHome devices: use secrets, enable API encryption, configure Wi-Fi minimum auth mode, and restrict OTA access with passwords."
+---
+
+ESPHome is designed for deployment on **trusted home or business networks** — not hardened for hostile environments or direct internet exposure. Even within a trusted network, following the practices in this guide significantly reduces the risk of unauthorized access to your devices and the data they collect.
+
+<Warning>
+  ESPHome devices should **never** be directly reachable from the internet without additional security measures such as a VPN. The built-in security features assume physical network perimeter protection.
+</Warning>
+
+---
+
+## Secrets Management
+
+The single most impactful habit you can build is keeping all sensitive values — passwords, API keys, Wi-Fi credentials — out of your device configuration files and in a dedicated `secrets.yaml` file instead. This lets you share or publish your configuration YAML safely.
+
+### The `secrets.yaml` File
+
+Create a `secrets.yaml` file in the same directory as your device configurations. It must be a flat key-to-scalar mapping:
+
+```yaml
+# secrets.yaml
+wifi_ssid: "MyHomeNetwork"
+wifi_password: "correct-horse-battery-staple"
+
+living_room_api_key: "uKh1234567890abcdefghijklmnopqrstuvwxyz="
+living_room_ota_password: "strong-unique-ota-password"
+
+bedroom_api_key: "aBc9876543210zyxwvutsrqponmlkjihgfedcba="
+bedroom_ota_password: "another-unique-ota-password"
+```
+
+Reference values with the `!secret` tag in any device file:
+
+```yaml
+# living-room.yaml
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret living_room_api_key
+
+ota:
+  - platform: esphome
+    password: !secret living_room_ota_password
+```
+
+<Warning>
+  **Never commit `secrets.yaml` to a public (or private shared) Git repository.** Add it to `.gitignore` the moment you create it:
+
+  ```text
+  # .gitignore
+  secrets.yaml
+  *.backup
+  ```
+
+  If you accidentally commit secrets, rotate all affected credentials immediately, then remove the file from history using `git filter-branch` or the BFG Repo-Cleaner.
+</Warning>
+
+### Per-Device Unique Credentials
+
+Wi-Fi credentials are the only values that should be shared across devices. Every other secret must be unique per device so that a compromise of one device does not expose all others.
+
+| Credential | Shared across devices? |
+|---|---|
+| `wifi_ssid` / `wifi_password` | ✅ Yes |
+| API encryption key | ❌ No — unique per device |
+| OTA password | ❌ No — unique per device |
+| Web server credentials | ❌ No — unique per device |
+| Fallback AP password | ❌ No — unique per device |
+
+---
+
+## API Encryption
+
+The [native API](/components/api/) is the primary channel between ESPHome devices and Home Assistant. Without encryption, anyone on your local network can read sensor data, control switches and lights, and execute services on your devices.
+
+**Always enable API encryption:**
+
+```yaml
+api:
+  encryption:
+    key: !secret living_room_api_key
+```
+
+**Generating a key** — The [API component documentation](/components/api#configuration-variables) includes an on-demand key generator. Keys are 32-byte values encoded as Base64. Generate a new key for each device and store each one in `secrets.yaml` under a unique name.
+
+<Warning>
+  If a device is lost, stolen, or otherwise compromised, **immediately regenerate its API encryption key**, update `secrets.yaml`, and re-flash the device. A compromised key must be treated as permanently exposed.
+</Warning>
+
+---
+
+## OTA Password Protection
+
+[Over-the-Air updates](/components/ota/) allow you to push firmware wirelessly without a physical USB connection. Without a password, anyone on your local network can replace your firmware with anything they choose.
+
+```yaml
+ota:
+  - platform: esphome
+    password: !secret living_room_ota_password
+```
+
+<Warning>
+  An unprotected OTA endpoint is one of the most serious risks in an ESPHome deployment. An attacker who can reach the device on the network can upload arbitrary firmware, gaining full control of the hardware and any credentials stored in flash.
+</Warning>
+
+**Best practices:**
+- Use a strong, randomly generated password (20+ characters).
+- Store the password in `secrets.yaml`.
+- Never reuse OTA passwords across devices.
+- Rotate passwords periodically or immediately after a suspected compromise.
+
+---
+
+## Wi-Fi Security
+
+### Minimum Authentication Mode
+
+ESPHome allows you to enforce a minimum Wi-Fi security protocol. This prevents devices from accidentally associating with a rogue access point that advertises a weaker encryption mode.
+
+```yaml
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  min_auth_mode: WPA2   # Reject WEP and open networks
+```
+
+<CardGroup cols={2}>
+  <Card title="ESP32 Devices" icon="shield-check">
+    The default `min_auth_mode` is `WPA2`, allowing both WPA2 and WPA3 networks. Set `min_auth_mode: WPA3` only if **all** your access points support WPA3.
+  </Card>
+  <Card title="ESP8266 Devices" icon="shield">
+    The default is `WPA`, which permits insecure TKIP connections. **Explicitly set `min_auth_mode: WPA2`** on all ESP8266 devices.
+  </Card>
+</CardGroup>
+
+WPA (TKIP) has known cryptographic vulnerabilities. Only use it if you have a legacy router that cannot be upgraded.
+
+### Fallback AP Password
+
+The Wi-Fi component creates a fallback access point if the device cannot connect to your network. This AP must always have a password:
+
+```yaml
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Living-Room-Fallback"
+    password: !secret living_room_fallback_password
+```
+
+Without a password, anyone nearby can connect to the fallback AP when your Wi-Fi is unavailable, and from there access the web server and OTA endpoint. In production environments consider removing the `ap:` block entirely to disable the fallback AP.
+
+### Prefer Ethernet Where Possible
+
+For devices that support it, wired Ethernet eliminates Wi-Fi attack surfaces entirely (deauthentication attacks, jamming, rogue AP association). See the [Ethernet component](/components/ethernet/) for supported hardware.
+
+---
+
+## Web Server
+
+The optional [web server component](/components/web-server) provides a browser-accessible dashboard and API for your device. If you enable it, always require authentication:
+
+```yaml
+web_server:
+  port: 80
+  auth:
+    username: !secret living_room_web_username
+    password: !secret living_room_web_password
+```
+
+<Tip>
+  If you only need device monitoring and control, consider using Home Assistant or the native API instead of the web server. Fewer exposed endpoints means a smaller attack surface. Disable the web server entirely in production by simply not including the `web_server:` block.
+</Tip>
+
+---
+
+## Logger Security
+
+At `DEBUG` or `VERBOSE` log levels, ESPHome may log Wi-Fi passwords and other sensitive values. Keep your production devices at `INFO` or higher:
+
+```yaml
+logger:
+  level: INFO
+  logs:
+    wifi: WARN
+    api: WARN
+```
+
+Avoid logging GPS coordinates, personal identifiers, or any other private data from sensors.
+
+---
+
+## Network Segmentation
+
+For most home users, keeping ESPHome devices and Home Assistant on the **same network** is the simplest and most reliable setup. ESPHome uses mDNS for device discovery, which does not cross VLAN boundaries by default.
+
+If you require VLAN isolation, the recommended approach is to give Home Assistant two network interfaces — one on the management VLAN and one on the IoT VLAN — so it can discover devices via mDNS without an unreliable mDNS reflector.
+
+```text
+Internet → Firewall → VLAN 10 (trusted — user devices, Home Assistant management)
+                   → VLAN 30 (IoT — ESPHome devices)
+
+Home Assistant:
+  eth0 → VLAN 10 (192.168.10.x) — user access
+  eth1 → VLAN 30 (192.168.30.x) — ESPHome mDNS discovery
+```
+
+---
+
+## Minimal Secure Configuration
+
+The following template applies all of the above recommendations to a single device. Copy it, fill in the secrets, and adapt the board and components to your hardware.
+
+```yaml
+esphome:
+  name: living-room-sensor
+  friendly_name: Living Room Sensor
+
+esp32:
+  board: esp32dev
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  min_auth_mode: WPA2
+  ap:
+    ssid: "Living-Room-Fallback"
+    password: !secret living_room_fallback_password
+
+# Native API with encryption — required
+api:
+  encryption:
+    key: !secret living_room_api_key
+
+# OTA with password — required
+ota:
+  - platform: esphome
+    password: !secret living_room_ota_password
+
+# Web server disabled — use Home Assistant instead
+# web_server:
+#   port: 80
+#   auth:
+#     username: !secret living_room_web_username
+#     password: !secret living_room_web_password
+
+logger:
+  level: INFO
+  logs:
+    wifi: WARN
+    api: WARN
+```
+
+And the corresponding `secrets.yaml` entries:
+
+```yaml
+wifi_ssid: "MyHomeNetwork"
+wifi_password: "correct-horse-battery-staple"
+
+living_room_api_key: "uKh1234567890abcdefghijklmnopqrstuvwxyz="
+living_room_ota_password: "Xk9#mP2$vL7nQw4@"
+living_room_fallback_password: "Jt6&rN3!cY8sAe1%"
+```
+
+---
+
+## Incident Response
+
+If you suspect a device has been compromised:
+
+<Steps>
+  <Step title="Isolate the device">
+    Disconnect it from the network (pull the power or block it at the router/firewall) to prevent further communication.
+  </Step>
+  <Step title="Document what you observed">
+    Note timestamps, unusual log entries, unexpected API connections, or sensor behavior that triggered the suspicion.
+  </Step>
+  <Step title="Rotate all credentials for that device">
+    Generate new API encryption key, OTA password, web server credentials, and fallback AP password. Update `secrets.yaml`.
+  </Step>
+  <Step title="Re-flash via USB">
+    Flash fresh firmware via a physical USB/serial connection — do not trust OTA if the device may be compromised.
+  </Step>
+  <Step title="Audit neighboring devices">
+    Check logs on other devices on the same network for signs of lateral movement.
+  </Step>
+  <Step title="Monitor">
+    Watch logs and network traffic on the restored device for continued suspicious activity.
+  </Step>
+</Steps>
+
+**To report a security vulnerability in ESPHome itself:** Do **not** open a public GitHub issue. Follow the [ESPHome Security Policy](https://github.com/esphome/esphome/security) for responsible disclosure.
+
+---
+
+## See Also
+
+- [API Component](/components/api/)
+- [OTA Component](/components/ota/)
+- [Wi-Fi Component](/components/wifi/)
+- [Web Server Component](/components/web-server)
+- [YAML Configuration and Secrets](/guides/yaml-configuration/)
+- [Home Assistant Security Checklist](https://www.home-assistant.io/docs/configuration/securing/)

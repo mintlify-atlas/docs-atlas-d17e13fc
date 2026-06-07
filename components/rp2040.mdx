@@ -1,0 +1,197 @@
+---
+title: "RP2040 (Raspberry Pi Pico) Platform in ESPHome"
+sidebarTitle: "RP2040"
+description: "Use ESPHome on RP2040 microcontrollers (Raspberry Pi Pico, Pico W). Covers board config, flash mode, and supported components."
+---
+
+The `rp2040:` component enables ESPHome support for Raspberry Pi's RP2040 and RP2350 microcontrollers, including the popular Raspberry Pi Pico and Pico W boards. The RP2040 is a dual-core ARM Cortex-M0+ chip, while the RP2350 (used in Pico 2 and Pico 2 W) adds Cortex-M33 cores with optional RISC-V support. Network connectivity on wireless Pico boards is provided by the Infineon CYW43439 Wi-Fi/Bluetooth chip. Wired Ethernet is available via SPI controllers such as the W5500 or ENC28J60. The build system uses the [arduino-pico](https://github.com/earlephilhower/arduino-pico) framework, which supports over 140 boards.
+
+<Note>
+  The Raspberry Pi **Pico W** and other RP2040/RP2350 boards with the CYW43439 chip are supported and tested. Boards using ESP-AT Wi-Fi modules (including some clones labeled `RP2040 Pico W-2023`) are **not** supported.
+</Note>
+
+## Minimal Example
+
+```yaml
+esphome:
+  name: pico-sensor
+
+rp2040:
+  board: rpipicow
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+api:
+ota:
+  - platform: esphome
+```
+
+## Configuration Variables
+
+<ParamField path="board" type="string" required>
+  The PlatformIO board identifier for your RP2040/RP2350 board. Common values:
+
+  - `rpipicow` — Raspberry Pi Pico W (RP2040 + CYW43439 Wi-Fi)
+  - `rpipico` — Raspberry Pi Pico (RP2040, no wireless)
+  - `rpipico2w` — Raspberry Pi Pico 2 W (RP2350 + CYW43439)
+  - `rpipico2` — Raspberry Pi Pico 2 (RP2350, no wireless)
+
+  Over 140 boards from the arduino-pico framework are supported.
+</ParamField>
+
+<ParamField path="watchdog_timeout" type="Time">
+  Hardware watchdog timeout. If the device hangs for this duration, it reboots. Maximum is `8388ms`. Set to `0s` to disable the watchdog entirely. Defaults to `8388ms`.
+</ParamField>
+
+<ParamField path="enable_full_printf" type="boolean">
+  Enable full `FILE*`-based printf support. Disabled by default, saving ~9.2 KB of flash. Set to `true` only if an external component requires `FILE*`-based printf. Defaults to `false`.
+</ParamField>
+
+## First-Time Flashing (BOOTSEL Mode)
+
+RP2040/RP2350 boards are flashed via USB as a mass-storage device. For the first flash:
+
+1. Unplug the board from USB.
+2. Hold the **BOOTSEL** button.
+3. Plug in the USB cable while holding the button.
+4. Release the button — the board appears as a USB drive (`RPI-RP2`).
+5. Run `esphome run your_config.yaml`. ESPHome detects the mounted drive and uploads the UF2 firmware automatically.
+
+After the first flash, subsequent updates can be done over-the-air (OTA) or via serial without holding BOOTSEL — the `picotool` upload protocol resets the device into BOOTSEL mode automatically.
+
+## GPIO Pin Names
+
+ESPHome supports symbolic pin names for RP2040 boards with known pin mappings:
+
+| Pin Name | Pico W GPIO | Description |
+|----------|-------------|-------------|
+| `LED` | 64 (CYW43) | Onboard LED (wireless chip controlled) |
+| `SDA` | GPIO 4 | Default I²C data |
+| `SCL` | GPIO 5 | Default I²C clock |
+| `SDA1` | GPIO 26 | Secondary I²C data |
+| `SCL1` | GPIO 27 | Secondary I²C clock |
+| `MISO` | GPIO 16 | Default SPI MISO |
+| `MOSI` | GPIO 19 | Default SPI MOSI |
+| `SCK` | GPIO 18 | Default SPI clock |
+| `SS` | GPIO 17 | Default SPI chip select |
+| `TX` | GPIO 0 | Default UART TX |
+| `RX` | GPIO 1 | Default UART RX |
+
+<Note>
+  On boards with the CYW43439 chip (Pico W, Pico 2 W), the onboard LED is connected to the wireless chip — not a standard GPIO pin. It is accessible as pin `64` or the `LED` name and supports output mode only.
+</Note>
+
+## Onboard LED Example
+
+```yaml
+rp2040:
+  board: rpipicow
+
+output:
+  - platform: gpio
+    pin: LED
+    id: led_output
+
+light:
+  - platform: binary
+    name: "Onboard LED"
+    output: led_output
+```
+
+## Complete Pico W Example
+
+```yaml
+esphome:
+  name: pico-w-hub
+  friendly_name: "Pico W Sensor Hub"
+
+rp2040:
+  board: rpipicow
+  watchdog_timeout: 8388ms
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  manual_ip:
+    static_ip: 192.168.1.75
+    gateway: 192.168.1.1
+    subnet: 255.255.255.0
+
+logger:
+  hardware_uart: USB_CDC   # Default for RP2040
+  level: DEBUG
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+sensor:
+  - platform: dht
+    pin: GPIO15
+    temperature:
+      name: "Temperature"
+    humidity:
+      name: "Humidity"
+    update_interval: 30s
+
+output:
+  - platform: gpio
+    pin: LED
+    id: led_output
+
+light:
+  - platform: binary
+    name: "Status LED"
+    output: led_output
+```
+
+## Wired Ethernet (W5500)
+
+Pico boards can use SPI Ethernet controllers like the W5500. See the [Ethernet component](/components/ethernet/) for the full reference.
+
+```yaml
+rp2040:
+  board: wiznet_5500_evb_pico
+
+ethernet:
+  type: W5500
+  clk_pin: 18
+  mosi_pin: 19
+  miso_pin: 16
+  cs_pin: 17
+  interrupt_pin: 21
+  reset_pin: 20
+```
+
+## Serial Debugging
+
+By default, ESPHome logs over USB CDC. If the device fails to boot or USB CDC does not enumerate, use a hardware UART adapter:
+
+```yaml
+logger:
+  hardware_uart: UART0
+  baud_rate: 115200
+```
+
+Connect a USB-to-serial adapter to the board's UART0 pins:
+
+| Signal | Pico W Pin | Adapter |
+|--------|-----------|---------|
+| TX | GPIO 0 (`TX`) | RX |
+| RX | GPIO 1 (`RX`) | TX |
+| GND | Any GND | GND |
+
+<Tip>
+  The `TX` and `RX` named pins resolve to the correct UART0 GPIO numbers for your board automatically. For boards other than the Pico W, check [boards.py](https://github.com/esphome/esphome/blob/dev/esphome/components/rp2040/boards.py) for the pin mapping — silk-screen labels may differ from internal GPIO numbers.
+</Tip>
+
+<Warning>
+  Do not remove the `platform_version` from older configurations without testing. As of ESPHome 2024.9.2, specifying a custom `platform_version` in the `framework:` block is known to cause compilation issues due to version mismatches. Remove it and let ESPHome manage the version automatically.
+</Warning>

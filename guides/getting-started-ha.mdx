@@ -1,0 +1,175 @@
+---
+title: "Get Started with ESPHome and Home Assistant"
+sidebarTitle: "Home Assistant"
+description: "Install ESPHome Device Builder as a Home Assistant add-on and flash your first ESP device using the guided setup wizard in minutes."
+---
+
+The easiest way to get started with ESPHome is through the **ESPHome Device Builder** — a web-based interface for creating, editing, and installing device configurations. When you run Home Assistant, you can install it as a native add-on in just a few clicks. This guide walks you through the entire process from installation to your first working smart home device.
+
+## What You'll Need
+
+- A running [Home Assistant](https://www.home-assistant.io/) installation with add-on support (Home Assistant OS or Supervised)
+- An ESP32 or ESP8266 development board (e.g., NodeMCU, ESP32-DevKitC, Wemos D1 Mini)
+- A USB data cable to connect the board to your computer for the initial flash
+- Your Wi-Fi network name (SSID) and password
+
+<Note>
+  If your Home Assistant installation does not support add-ons (e.g., Home Assistant Container or Core), you can run the ESPHome Device Builder independently using Docker. See the [Docker alternative](#docker-alternative) section below.
+</Note>
+
+## Installing and Setting Up ESPHome
+
+<Steps>
+  <Step title="Install the ESPHome Device Builder Add-on">
+    Open your Home Assistant instance and navigate to **Settings → Add-ons → Add-on Store**. Search for **ESPHome Device Builder** and click on it, or use the button below to open the add-on page directly:
+
+    [![Open ESPHome add-on in Home Assistant](https://my.home-assistant.io/badges/supervisor_addon.svg)](https://my.home-assistant.io/redirect/supervisor_addon/?addon=5c53de3b_esphome&repository_url=https%3A%2F%2Fgithub.com%2Fesphome%2Fhome-assistant-addon)
+
+    On the add-on page, click **Install**. Installation pulls the ESPHome container image and may take a minute or two depending on your internet speed.
+
+    Once installation completes, click **Start**, then toggle **Start on boot** and **Watchdog** to keep the add-on running reliably. Finally, click **Open Web UI** to launch the Device Builder.
+  </Step>
+
+  <Step title="Open the ESPHome Device Builder Web UI">
+    The Device Builder opens to the main dashboard. If this is your first time, you'll see an empty configuration list and a prompt to create your first device.
+
+    The dashboard displays all your ESPHome device configurations. For each entry you can:
+
+    - **EDIT** — open the YAML configuration editor
+    - **LOGS** — stream live logs from the device (via USB or Wi-Fi)
+    - **INSTALL** — compile and push updated firmware to the device
+    - **UPDATE** — appears when a newer ESPHome version is available for the device
+
+    <Note>
+      ESPHome configuration files are stored in the `<HOME_ASSISTANT_CONFIG>/esphome/` directory. For example, a device named `bedroom-light` is stored at `/config/esphome/bedroom-light.yaml`. To access these files via SSH, install the [Home Assistant SSH add-on](https://www.home-assistant.io/common-tasks/os/#installing-and-using-the-ssh-add-on).
+    </Note>
+  </Step>
+
+  <Step title="Create Your First Device Configuration">
+    Click **+ New Device** (or the equivalent prompt in the empty-state UI). The wizard offers three options:
+
+    **New Device Setup** (recommended for beginners)
+    The wizard guides you through selecting your microcontroller platform (ESP32, ESP8266, etc.), your specific board, and your Wi-Fi credentials. At the end, ESPHome generates a ready-to-use configuration file.
+
+    **Import from File**
+    Upload an existing `.yaml` or `.yml` ESPHome configuration. Useful for restoring a backup or migrating a configuration from another system. You can browse for a file or drag and drop it onto the dialog.
+
+    **Empty Configuration**
+    Creates a minimal skeleton for advanced users who want to write their configuration from scratch or paste one in from the [ESPHome Device Database](https://devices.esphome.io/).
+
+    After completing the wizard, your new device appears in the dashboard list.
+  </Step>
+
+  <Step title="Connect Your ESP Device via USB">
+    Before ESPHome can install firmware onto a brand-new device, it needs a physical USB connection — at least for the very first flash.
+
+    Connect your ESP board to the computer running Home Assistant (or to the computer your browser is running on — the web installer can flash locally). Use a **USB data cable**, not a charge-only cable.
+
+    <Warning>
+      The initial USB flash is the most common stumbling block for new users. Some cables only carry power and cannot transfer data. If the device is not detected, try a different cable before troubleshooting anything else. See the [Physical Device Connection guide](https://esphome.io/guides/physical_device_connection/) for full troubleshooting steps.
+    </Warning>
+
+    Once ESPHome is installed on your device, all future updates happen **over the air (OTA)** — no USB cable needed.
+  </Step>
+
+  <Step title="Install Firmware to Your Device">
+    From the dashboard, click the overflow menu (⋮) on your new device entry and choose **Install**. The Install dialog presents several options:
+
+    - **Plug into this computer** — flashes via the browser's WebSerial API directly to a USB-connected device. Works on Chrome and Edge.
+    - **Plug into the computer running ESPHome** — flashes via the server's serial port (useful when the ESP is plugged into your Home Assistant machine).
+    - **Manual download** — downloads a compiled `.bin` file that you can flash with [ESPHome Web](https://web.esphome.io/) or `esptool`.
+    - **Wirelessly** — available after the first installation; performs an OTA update over Wi-Fi.
+
+    ESPHome will compile your configuration (this takes 1–3 minutes on the first build; subsequent builds are faster due to caching) and then transfer the firmware.
+
+    <Tip>
+      If you run into compilation errors, try **Clean Build Files** from the overflow menu before reporting a bug. Stale build artifacts are a common cause of mysterious failures.
+    </Tip>
+
+    After flashing, enter your Wi-Fi credentials when prompted (if you didn't include them in the wizard). The device will reboot, connect to your network, and begin broadcasting its presence.
+  </Step>
+
+  <Step title="Home Assistant Auto-Discovery">
+    Once your ESPHome device is connected to Wi-Fi, Home Assistant will automatically discover it — usually within a minute. A notification will appear offering to add the new ESPHome integration.
+
+    [![Open ESPHome integration in Home Assistant](https://my.home-assistant.io/badges/integration.svg)](https://my.home-assistant.io/redirect/integration/?domain=esphome)
+
+    If auto-discovery doesn't appear after a few minutes, you can add the device manually:
+
+    1. Go to **Settings → Devices & Services → Add Integration**
+    2. Search for **ESPHome**
+    3. Enter the device's hostname (e.g., `living-room-lamp.local`) or its IP address
+
+    All sensors, switches, and other entities defined in your YAML configuration will appear automatically in Home Assistant's UI.
+  </Step>
+</Steps>
+
+## Adding Components to Your Configuration
+
+Once your device is running, click **EDIT** in the Device Builder to open the YAML editor. You can add any of ESPHome's hundreds of components. Here are two quick examples:
+
+**GPIO Switch** — control a relay, LED, or any digital output:
+
+```yaml
+switch:
+  - platform: gpio
+    name: "Living Room Dehumidifier"
+    pin: GPIO5
+```
+
+**GPIO Binary Sensor** — read a button, door sensor, or any digital input:
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    name: "Living Room Window"
+    pin:
+      number: GPIO0
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+```
+
+After editing, click **SAVE** and then **INSTALL** to push the updated firmware to your device wirelessly.
+
+<Note>
+  Saving the configuration file alone does **not** update the physical device. You must click **INSTALL** each time you want to apply changes.
+</Note>
+
+## Docker Alternative
+
+If your Home Assistant setup doesn't support add-ons, you can run the ESPHome Device Builder as a standalone Docker container:
+
+```yaml
+# docker-compose.yml
+services:
+  esphome:
+    container_name: esphome
+    image: ghcr.io/esphome/esphome
+    volumes:
+      - /path/to/esphome/config:/config
+      - /etc/localtime:/etc/localtime:ro
+    restart: always
+    privileged: true
+    network_mode: host
+    environment:
+      - USERNAME=admin
+      - PASSWORD=ChangeMe
+```
+
+Start it with `docker compose up -d`, then open `http://<your-host>:6052` in your browser. The web interface is identical to the Home Assistant add-on.
+
+<Tip>
+  Running ESPHome on WSL2? Store your config files inside the WSL2 filesystem (e.g., `~/esphome/config`) rather than on a Windows-mounted drive (e.g., `/mnt/c/...`). Accessing Windows drives from WSL2 can make builds 10× slower due to filesystem overhead.
+</Tip>
+
+## Where to Go Next
+
+You've installed ESPHome, created your first device configuration, and connected it to Home Assistant. Here are some natural next steps:
+
+- **[Browse Components](https://esphome.io/components/)** — find components for your sensors, displays, and actuators
+- **[Device Database](https://devices.esphome.io/)** — look up pre-made configurations for popular commercial devices
+- **[Command Line Guide](/guides/getting-started-cli)** — learn the CLI for power users and CI/CD workflows
+- **[Security Best Practices](https://esphome.io/guides/security_best_practices/)** — secure your devices on the network
+- **[FAQ](https://esphome.io/guides/faq/)** — answers to the most common ESPHome questions

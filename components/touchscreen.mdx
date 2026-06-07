@@ -1,0 +1,267 @@
+---
+title: "Touchscreen Components for ESP32 Displays"
+sidebarTitle: "Touchscreen"
+description: "Add touchscreen input to ESP32 display projects with ESPHome. Covers GT911, CST816, XPT2046, FT63x6 controllers and touch automation triggers."
+---
+
+ESPHome's `touchscreen` component bridges capacitive and resistive touch controllers to the rest of the ESPHome ecosystem — including display pages, LVGL widgets, and binary sensor virtual buttons. It handles coordinate translation, calibration, and multi-touch tracking, so your display project can respond to finger presses, drags, and releases with only a few lines of YAML.
+
+## Minimal Example
+
+```yaml
+touchscreen:
+  - platform: gt911
+    display: my_display
+    interrupt_pin: GPIO38
+    reset_pin: GPIO48
+    on_touch:
+      then:
+        - logger.log:
+            format: "Touch at x=%d, y=%d"
+            args: [touch.x, touch.y]
+```
+
+## Base Touchscreen Configuration
+
+All touchscreen platforms share these configuration variables.
+
+```yaml
+touchscreen:
+  - platform: ...
+    display: display1
+    transform:
+      mirror_x: false
+      mirror_y: false
+      swap_xy: false
+    update_interval: 50ms
+    touch_timeout: 300ms
+    calibration:
+      x_min: 281
+      x_max: 3848
+      y_min: 347
+      y_max: 3878
+    on_touch:
+      then: ...
+    on_update:
+      then: ...
+    on_release:
+      then: ...
+```
+
+<ParamField path="display" type="ID" required>
+  The ID of the display component this touchscreen is attached to. The touchscreen uses the display's dimensions to scale coordinates.
+</ParamField>
+
+<ParamField path="transform" type="object" optional>
+  Hardware coordinate transformation applied before scaling. All defaults are `false`.
+  - `swap_xy` — swap the X and Y axes.
+  - `mirror_x` — flip the X axis.
+  - `mirror_y` — flip the Y axis.
+</ParamField>
+
+<ParamField path="update_interval" type="Time" optional>
+  Polling interval when no interrupt pin is used. Defaults to `50ms`.
+</ParamField>
+
+<ParamField path="touch_timeout" type="Time" optional>
+  How long to wait before considering a touch ended on controllers that don't report release events. Default varies by platform.
+</ParamField>
+
+<ParamField path="calibration" type="object" optional>
+  Manual calibration for resistive touchscreens whose raw values do not map directly to screen pixels (e.g. XPT2046). See [Calibration](#calibration) below.
+  - `x_min` / `x_max` — raw values at left/right edge.
+  - `y_min` / `y_max` — raw values at top/bottom edge.
+</ParamField>
+
+---
+
+## TouchPoint Argument Type
+
+Both `on_touch` and `on_update` receive touch point objects with these fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int | Touch identifier for multi-touch tracking |
+| `state` | int | `1` = initial touch, `2` = moved, `4+` = released |
+| `x`, `y` | int | Current position in display pixels |
+| `x_prev`, `y_prev` | int | Previous position |
+| `x_org`, `y_org` | int | Position when touch was first detected |
+| `x_raw`, `y_raw` | int | Raw values (useful for calibration) |
+
+---
+
+## Automation Triggers
+
+### `on_touch`
+
+Fires once when an initial touch is detected. Not fired again until all touches are released.
+
+Provides `touch` (single `TouchPoint`) and `touches` (list of all active points).
+
+```yaml
+on_touch:
+  then:
+    - logger.log:
+        format: "Touch at x=%d y=%d"
+        args: [touch.x, touch.y]
+```
+
+### `on_update`
+
+Fires whenever a touch position changes or a new finger lands — useful for gesture detection.
+
+Provides `touches` — a list of `TouchPoint` objects.
+
+```yaml
+on_update:
+  then:
+    - lambda: |-
+        for (auto t : touches) {
+          if (t.state <= 2) {
+            ESP_LOGI("touch", "id=%d x=%d y=%d", t.id, t.x, t.y);
+          }
+        }
+```
+
+<Note>
+  Always check `touch.state` in `on_update` — state `0` means the touch is no longer valid.
+</Note>
+
+### `on_release`
+
+Fires when all touches are released from the screen. No touch arguments are provided.
+
+```yaml
+on_release:
+  then:
+    - logger.log: "Released"
+```
+
+---
+
+## Binary Sensor Virtual Buttons
+
+Define rectangular areas on the touchscreen as `binary_sensor` entities. When a touch lands inside the area, the sensor reports `ON`.
+
+```yaml
+binary_sensor:
+  - platform: touchscreen
+    name: "Top Left Button"
+    x_min: 0
+    x_max: 100
+    y_min: 0
+    y_max: 100
+    page_id: home_page
+```
+
+<ParamField path="x_min" type="int" required>Left edge of the touch zone (pixels).</ParamField>
+<ParamField path="x_max" type="int" required>Right edge of the touch zone (pixels).</ParamField>
+<ParamField path="y_min" type="int" required>Top edge of the touch zone (pixels).</ParamField>
+<ParamField path="y_max" type="int" required>Bottom edge of the touch zone (pixels).</ParamField>
+
+<ParamField path="page_id" type="ID" optional>
+  Only activate this sensor when the specified display page is showing. Use `pages` (list) if you want multiple pages.
+</ParamField>
+
+<ParamField path="use_raw" type="boolean" optional>
+  If `true`, accepts raw coordinates outside the display area. Useful for resistive touchscreens that extend beyond the visible screen.
+</ParamField>
+
+---
+
+## Calibration
+
+Resistive touchscreens (e.g. XPT2046) return raw ADC values that bear no relationship to pixel coordinates. You must calibrate them by touching the corners and recording the raw values.
+
+**Step 1:** Log raw values from each corner using `on_touch`:
+
+```yaml
+touchscreen:
+  platform: xpt2046
+  cs_pin: GPIO15
+  on_touch:
+    - lambda: |-
+        ESP_LOGI("cal", "x=%d y=%d x_raw=%d y_raw=%d",
+          touch.x, touch.y, touch.x_raw, touch.y_raw);
+```
+
+**Step 2:** Touch each corner several times and note the minimum/maximum raw X and Y values from the logs.
+
+**Step 3:** Apply calibration:
+
+```yaml
+touchscreen:
+  platform: xpt2046
+  cs_pin: GPIO15
+  calibration:
+    x_min: 281
+    x_max: 3848
+    y_min: 347
+    y_max: 3878
+  transform:
+    mirror_x: false
+    mirror_y: false
+    swap_xy: false
+```
+
+**Step 4:** Verify by drawing a circle at the touch point:
+
+```yaml
+display:
+  - platform: ili9341
+    lambda: |-
+      auto t = id(my_touch)->get_touch();
+      if (t) it.filled_circle(t.value().x, t.value().y, 10, RED);
+```
+
+<Tip>
+  If touching the left edge produces large X raw values, enable `mirror_x: true`. If the X axis maps to the display's Y axis, enable `swap_xy: true`.
+</Tip>
+
+---
+
+## Popular Touchscreen Platforms
+
+<CardGroup cols={2}>
+  <Card title="GT911" icon="hand-pointer">
+    Capacitive multi-touch controller. Common in ESP32-S3 display boards. Supports up to 5 simultaneous touch points.
+  </Card>
+  <Card title="CST816S / CST226" icon="hand-pointer">
+    Low-power capacitive controller popular in round displays. Supports swipe gesture recognition.
+  </Card>
+  <Card title="XPT2046" icon="hand-pointer">
+    Resistive 4-wire touchscreen controller. Requires calibration but works with older, cheaper panels.
+  </Card>
+  <Card title="FT5x06 / FT63x6" icon="hand-pointer">
+    Capacitive multi-touch I²C controller used in many 3.5" and 4" TFT displays.
+  </Card>
+  <Card title="TT21100" icon="hand-pointer">
+    Capacitive I²C touchscreen controller used in several Espressif development boards.
+  </Card>
+  <Card title="EKTF2232" icon="hand-pointer">
+    Touchscreen controller used in the Inkplate 6 Plus and similar e-ink display devices.
+  </Card>
+</CardGroup>
+
+## Advanced Example: Swipe Gesture Detection
+
+```yaml
+touchscreen:
+  - platform: gt911
+    display: my_display
+    id: my_touch
+    on_touch:
+      then:
+        - globals.set:
+            id: touch_start_x
+            value: !lambda "return touch.x;"
+    on_release:
+      then:
+        - lambda: |-
+            int delta = id(touch_start_x) - id(my_touch)->get_touch().value_or(TouchPoint{}).x_org;
+            if (delta > 50) {
+              id(my_display).show_next_page();
+            } else if (delta < -50) {
+              id(my_display).show_previous_page();
+            }
+```

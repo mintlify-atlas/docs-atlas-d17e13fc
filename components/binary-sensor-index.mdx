@@ -1,0 +1,266 @@
+---
+title: "Binary Sensor Components: Detecting On/Off States"
+sidebarTitle: "Binary Sensors"
+description: "Binary sensors in ESPHome report two-state values — on/off, open/closed, detected/clear. Covers GPIO, BLE presence, touch, and more."
+---
+
+ESPHome binary sensors represent any input that has exactly two states: `ON` or `OFF`. They map naturally to physical phenomena like a button being pressed, a door being open, motion being detected, or a GPIO pin being pulled high. Binary sensors appear automatically in Home Assistant and support rich automation triggers for press, release, click, double-click, and complex multi-click sequences.
+
+## Base Binary Sensor Configuration
+
+All binary sensor platforms inherit these configuration variables.
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    pin: GPIO0
+    name: "Front Door"
+    device_class: door
+    filters:
+      - delayed_on: 20ms
+      - delayed_off: 20ms
+    on_press:
+      then:
+        - logger.log: "Door opened!"
+```
+
+<ParamField path="id" type="string" optional>
+  Manually specify the ID for code generation. At least one of `id` and `name` must be specified.
+</ParamField>
+
+<ParamField path="name" type="string" optional>
+  The name for the binary sensor in Home Assistant. Set to `None` to inherit the device's `friendly_name`.
+</ParamField>
+
+<ParamField path="device_class" type="string" optional>
+  The [Home Assistant device class](https://www.home-assistant.io/integrations/binary_sensor/#device-class) (e.g. `motion`, `door`, `window`, `occupancy`). Controls the icon and friendly state text.
+</ParamField>
+
+<ParamField path="icon" type="icon" optional>
+  Manually override the MDI icon shown in the frontend.
+</ParamField>
+
+<ParamField path="filters" type="list" optional>
+  A list of [binary sensor filters](#binary-sensor-filters) applied in sequence.
+</ParamField>
+
+<ParamField path="internal" type="boolean" optional>
+  If `true`, the sensor is not exposed to Home Assistant. Setting only an `id` implicitly sets this to `true`. Defaults to `false`.
+</ParamField>
+
+<ParamField path="disabled_by_default" type="boolean" optional>
+  If `true`, the entity is added but hidden in Home Assistant until manually enabled. Defaults to `false`.
+</ParamField>
+
+<ParamField path="trigger_on_initial_state" type="boolean" optional>
+  If `true`, automation triggers fire when the binary sensor transitions from `unknown` to its first valid state. Defaults to `false`.
+</ParamField>
+
+<ParamField path="entity_category" type="string" optional>
+  The entity category (`config`, `diagnostic`). Set to `""` to remove the default.
+</ParamField>
+
+---
+
+## Binary Sensor Filters
+
+Filters modify how state changes propagate through the pipeline. They are applied in the order listed.
+
+```yaml
+filters:
+  - invert:                    # flip ON/OFF
+  - delayed_on: 100ms          # require ON for 100 ms before publishing ON
+  - delayed_off: 100ms         # require OFF for 100 ms before publishing OFF
+  - delayed_on_off: 20ms       # equal on/off delay (good for debounce)
+  - delayed_on_off:            # different on/off delays
+      time_on: 100ms
+      time_off: 500ms
+  - settle: 50ms               # publish immediately but suppress rapid re-triggers
+  - autorepeat:                # hold-to-repeat behavior
+      - delay: 1s
+        time_off: 100ms
+        time_on: 900ms
+  - lambda: |-                 # arbitrary C++ filter
+      if (id(inhibit).state) return {};
+      return x;
+```
+
+### `invert`
+
+Flips every state: ON becomes OFF and vice versa. Useful when hardware logic is active-low.
+
+### `delayed_on` / `delayed_off`
+
+Require the signal to remain stable for the specified duration before publishing the change. Essential for debouncing mechanical switches.
+
+### `delayed_on_off`
+
+A combined debounce filter: publishes a change only after the signal has held the new state for the given duration.
+
+```yaml
+filters:
+  - delayed_on_off: 20ms   # short form (equal delays)
+```
+
+### `autorepeat`
+
+Implements hold-to-repeat behavior. After the initial press, the output toggles at increasing frequency until released.
+
+### `settle`
+
+Publishes the value immediately but ignores further changes until the signal has settled for the specified period.
+
+---
+
+## Binary Sensor Automations
+
+ESPHome binary sensors use mouse-button-inspired terminology: a **press** is the leading edge (ON), a **release** is the trailing edge (OFF).
+
+### `on_press`
+
+Fires on the leading edge (button down).
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    pin: GPIO0
+    name: "Button"
+    on_press:
+      then:
+        - switch.toggle: relay_1
+```
+
+### `on_release`
+
+Fires on the trailing edge (button up).
+
+```yaml
+    on_release:
+      then:
+        - light.turn_off: status_led
+```
+
+### `on_state`
+
+Fires on any state change (combines press and release). The new state is available as boolean `x`.
+
+```yaml
+    on_state:
+      then:
+        - logger.log:
+            format: "State changed to: %s"
+            args: ["x ? \"ON\" : \"OFF\""]
+```
+
+### `on_click`
+
+Fires when the button is held for `min_length` to `max_length`.
+
+```yaml
+    on_click:
+      min_length: 50ms
+      max_length: 350ms
+      then:
+        - light.toggle: my_light
+```
+
+<Note>
+  Multiple `on_click` entries are allowed and evaluated independently. Use different time ranges to distinguish short and long clicks.
+</Note>
+
+### `on_double_click`
+
+Fires when the button is pressed twice within the specified timing window.
+
+```yaml
+    on_double_click:
+      min_length: 50ms
+      max_length: 350ms
+      then:
+        - script.execute: activate_scene
+```
+
+### `on_multi_click`
+
+Matches complex press sequences using a timing grammar.
+
+```yaml
+    on_multi_click:
+      - timing:
+          - ON for at most 1s
+          - OFF for at most 1s
+          - ON for at most 1s
+          - OFF for at least 0.2s
+        then:
+          - logger.log: "Double click!"
+      - timing:
+          - ON for 1s to 2s
+          - OFF for at least 0.5s
+        then:
+          - logger.log: "Long press!"
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 0.5s
+        then:
+          - logger.log: "Short press!"
+```
+
+<Warning>
+  When using `on_multi_click` with physical buttons, always add a debounce filter (`delayed_on_off: 20ms`) to prevent spurious bounce edges from disrupting the timing sequence.
+</Warning>
+
+### `binary_sensor.is_on` / `binary_sensor.is_off` Condition
+
+```yaml
+on_...:
+  if:
+    condition:
+      binary_sensor.is_on: my_door_sensor
+    then:
+      - switch.turn_on: alarm
+```
+
+### Actions
+
+```yaml
+# Invalidate the current state (sets it to "unknown" in Home Assistant)
+on_...:
+  binary_sensor.invalidate_state: my_binary_sensor
+```
+
+### Lambda Calls
+
+```cpp
+// Publish a state from a lambda
+id(my_binary_sensor).publish_state(true);
+
+// Read the current state
+if (id(my_binary_sensor).state) {
+  // Sensor is ON
+}
+```
+
+---
+
+## Popular Binary Sensor Platforms
+
+<CardGroup cols={2}>
+  <Card title="GPIO Binary Sensor" icon="cpu">
+    The most fundamental binary sensor: reads a digital GPIO pin. Supports pull-up/pull-down and inverted logic.
+  </Card>
+  <Card title="Status" icon="wifi">
+    Reports whether the device is connected to Home Assistant. Useful for connection watchdogs.
+  </Card>
+  <Card title="Touchscreen" icon="hand-pointer">
+    Define rectangular touch zones on a display that act as virtual buttons.
+  </Card>
+  <Card title="Remote Receiver" icon="radio">
+    Triggers ON/OFF when a specific IR or RF remote code is received.
+  </Card>
+  <Card title="ESP32 BLE Tracker" icon="bluetooth">
+    Detects BLE device presence by MAC address or RSSI threshold.
+  </Card>
+  <Card title="Template" icon="code">
+    Compute a binary state from any C++ lambda expression, sensor value, or switch state.
+  </Card>
+</CardGroup>

@@ -1,0 +1,298 @@
+---
+title: "Ethernet Component: Wired Network for ESP32"
+sidebarTitle: "Ethernet"
+description: "Connect your ESP32 to a wired Ethernet network in ESPHome. Covers LAN8720, W5500, and other PHY chips with RMII and SPI interfaces."
+---
+
+The `ethernet:` component provides wired network connectivity for ESP32 and RP2040/RP2350 boards. For ESP32, both RMII PHY chips (LAN8720, RTL8201, IP101, and others) connected to the built-in Ethernet MAC, and SPI-based controllers (W5500, DM9051, ENC28J60) are supported. For RP2040/RP2350, only SPI/PIO controllers are supported (W5100, W5500, W6100, W6300, ENC28J60). Wired Ethernet and Wi-Fi **cannot be used simultaneously**, even when both are physically present on a board.
+
+## Minimal Examples
+
+<CodeGroup>
+
+```yaml RMII (LAN8720 on ESP32)
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk:
+    pin: GPIO17
+    mode: CLK_OUT
+  phy_addr: 0
+```
+
+```yaml SPI (W5500 on ESP32)
+ethernet:
+  type: W5500
+  clk_pin: GPIO13
+  mosi_pin: GPIO11
+  miso_pin: GPIO12
+  cs_pin: GPIO14
+  interrupt_pin: GPIO10
+  reset_pin: GPIO9
+```
+
+```yaml SPI (W5500 on RP2040 Pico)
+rp2040:
+  board: wiznet_5500_evb_pico
+
+ethernet:
+  type: W5500
+  clk_pin: 18
+  mosi_pin: 19
+  miso_pin: 16
+  cs_pin: 17
+  interrupt_pin: 21
+  reset_pin: 20
+```
+
+</CodeGroup>
+
+## Supported Chipsets
+
+| Type | Interface | Platforms |
+|------|-----------|-----------|
+| `LAN8720` | RMII | ESP32 only |
+| `LAN8670` | RMII | ESP32 only |
+| `RTL8201` | RMII | ESP32 only |
+| `DP83848` | RMII | ESP32 only |
+| `IP101` | RMII | ESP32 only |
+| `JL1101` | RMII | ESP32 only |
+| `KSZ8081` | RMII | ESP32 only |
+| `KSZ8081RNA` | RMII | ESP32 only |
+| `OPENETH` | QEMU | ESP32 only |
+| `W5500` | SPI | ESP32 + RP2040 |
+| `DM9051` | SPI | ESP32 only |
+| `ENC28J60` | SPI (10 Mbps) | ESP32 + RP2040 |
+| `W5100` | SPI | RP2040 only |
+| `W6100` | SPI | RP2040/RP2350 only |
+| `W6300` | PIO QSPI | RP2040/RP2350 only |
+
+## RMII Configuration Variables
+
+<ParamField path="type" type="string" required>
+  PHY chipset type. See the supported chipsets table above.
+</ParamField>
+
+<ParamField path="mdc_pin" type="pin" required>
+  Management Data Clock pin. Typically `GPIO23` on ESP32 boards with built-in PHY.
+</ParamField>
+
+<ParamField path="mdio_pin" type="pin" required>
+  Management Data I/O pin. Typically `GPIO18` on ESP32 boards with built-in PHY.
+</ParamField>
+
+<ParamField path="clk" type="mapping" required>
+  RMII clock configuration.
+
+  - **pin** (**Required**, pin): The clock GPIO pin.
+  - **mode** (**Required**, string): Clock source. `CLK_EXT_IN` uses an external crystal oscillator on the PHY board; `CLK_OUT` uses the ESP32's internal oscillator.
+</ParamField>
+
+<ParamField path="phy_addr" type="int">
+  PHY chip address on the MDIO bus. Defaults to `0`. Check your board's schematic.
+</ParamField>
+
+<ParamField path="power_pin" type="pin">
+  GPIO pin controlling the PHY's power or reset line. Leave unset if your board has no power control pin.
+</ParamField>
+
+<ParamField path="phy_registers" type="list">
+  Arbitrary PHY register values to write after Ethernet initialization. Each entry requires `address` (hex) and `value` (hex), and optionally `page_id` (hex, RTL8201 only).
+</ParamField>
+
+## SPI Configuration Variables
+
+<ParamField path="clk_pin" type="pin" required>
+  SPI clock pin.
+</ParamField>
+
+<ParamField path="mosi_pin" type="pin" required>
+  SPI MOSI (controller-out, peripheral-in) pin.
+</ParamField>
+
+<ParamField path="miso_pin" type="pin" required>
+  SPI MISO (controller-in, peripheral-out) pin.
+</ParamField>
+
+<ParamField path="cs_pin" type="pin" required>
+  SPI chip select pin.
+</ParamField>
+
+<ParamField path="interrupt_pin" type="pin">
+  Interrupt pin for packet-ready notification. Required for older ESP-IDF frameworks. Optional on ESP-IDF 5.1.4+ (use `polling_interval` instead).
+</ParamField>
+
+<ParamField path="reset_pin" type="pin">
+  GPIO pin wired to the controller's reset line. Optional but recommended.
+</ParamField>
+
+<ParamField path="clock_speed" type="float">
+  **ESP32 only.** SPI bus clock speed. Any frequency 8–80 MHz is accepted; the nearest integer divisor of 80 MHz is used. Defaults to `26.67MHz` (80 MHz ÷ 3).
+</ParamField>
+
+<ParamField path="polling_interval" type="Time">
+  **ESP32 only.** Polling interval when no `interrupt_pin` is configured. Requires ESP-IDF 5.1.4+. Minimum `1ms`. Defaults to `10ms`. Cannot be set simultaneously with `interrupt_pin`.
+</ParamField>
+
+<ParamField path="interface" type="string">
+  **ESP32 only.** Which SPI peripheral to use: `spi2` or `spi3`.
+</ParamField>
+
+## Common Configuration Variables
+
+<ParamField path="manual_ip" type="mapping">
+  Configure a static IP address. Recommended for reliable OTA and fast reconnection.
+
+  - **static_ip** (**Required**, IPv4): Static IP address.
+  - **gateway** (**Required**, IPv4): Default gateway (router IP).
+  - **subnet** (**Required**, IPv4): Subnet mask (e.g. `255.255.255.0`).
+  - **dns1** (*Optional*, IPv4): Primary DNS server.
+  - **dns2** (*Optional*, IPv4): Secondary DNS server.
+</ParamField>
+
+<ParamField path="use_address" type="string">
+  Override the target address for OTA uploads. Useful when migrating between IPs.
+</ParamField>
+
+<ParamField path="domain" type="string">
+  mDNS domain suffix. Defaults to `.local`.
+</ParamField>
+
+<ParamField path="mac_address" type="MAC Address">
+  Override the Ethernet interface MAC address.
+</ParamField>
+
+<ParamField path="on_connect" type="Automation">
+  Triggered when a wired network link is established.
+</ParamField>
+
+<ParamField path="on_disconnect" type="Automation">
+  Triggered when the wired network link is lost.
+</ParamField>
+
+## Board-Specific Examples
+
+<CodeGroup>
+
+```yaml Olimex ESP32-POE
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk:
+    pin: GPIO17
+    mode: CLK_OUT
+  phy_addr: 0
+  power_pin: GPIO12
+```
+
+```yaml WT32-ETH01 / SLZB-06
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk:
+    pin: GPIO0
+    mode: CLK_EXT_IN
+  phy_addr: 1
+  power_pin: GPIO16
+```
+
+```yaml Waveshare ESP32-S3-ETH PoE
+ethernet:
+  type: W5500
+  clk_pin: GPIO13
+  mosi_pin: GPIO11
+  miso_pin: GPIO12
+  cs_pin: GPIO14
+  interrupt_pin: GPIO10
+  reset_pin: GPIO9
+```
+
+```yaml WIZnet W5500-EVB-Pico (RP2040)
+rp2040:
+  board: wiznet_5500_evb_pico
+
+ethernet:
+  type: W5500
+  clk_pin: 18
+  mosi_pin: 19
+  miso_pin: 16
+  cs_pin: 17
+  interrupt_pin: 21
+  reset_pin: 20
+```
+
+```yaml wESP32 rev.7+ (RTL8201)
+ethernet:
+  type: RTL8201
+  mdc_pin: GPIO16
+  mdio_pin: GPIO17
+  clk:
+    pin: GPIO0
+    mode: CLK_EXT_IN
+  phy_addr: 0
+  phy_registers:
+    - address: 0x10
+      value: 0x1FFA
+      page_id: 0x07
+```
+
+</CodeGroup>
+
+## Complete Example with Static IP and Automations
+
+```yaml
+esphome:
+  name: eth-controller
+  friendly_name: "Wired Ethernet Controller"
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk:
+    pin: GPIO17
+    mode: CLK_OUT
+  phy_addr: 0
+  power_pin: GPIO12
+  manual_ip:
+    static_ip: 192.168.1.100
+    gateway: 192.168.1.1
+    subnet: 255.255.255.0
+    dns1: 192.168.1.1
+  on_connect:
+    - logger.log: "Ethernet link up"
+  on_disconnect:
+    - logger.log: "Ethernet link down"
+
+logger:
+api:
+  encryption:
+    key: !secret api_key
+ota:
+  - platform: esphome
+    password: !secret ota_password
+```
+
+<Note>
+  SPI-based Ethernet chips do **not** use the ESPHome SPI bus component. Their SPI pins cannot be shared with other SPI devices. Wire each Ethernet controller to dedicated GPIO pins.
+</Note>
+
+<Warning>
+  Avoid using flying leads or Dupont wires for RMII Ethernet connections. The RMII clock signal runs at 50 MHz and will not reliably propagate over loose wires, causing intermittent connection failures. Use proper PCB traces or a purpose-built carrier board.
+</Warning>
+
+<Note>
+  The ENC28J60 is limited to 10 Mbps. For applications requiring higher throughput, use a W5500 (100 Mbps) instead.
+</Note>
+
+<Tip>
+  The `CLK_EXT_IN` clock mode requires an external 50 MHz oscillator on the PHY board. The `CLK_OUT` mode uses the ESP32's internal PLL — more common on boards where the ESP32 supplies the clock to the PHY. Check your board's schematic to determine which mode is correct.
+</Tip>

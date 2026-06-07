@@ -1,0 +1,282 @@
+---
+title: "Display Components: Driving Screens with ESPHome"
+sidebarTitle: "Displays"
+description: "Drive SPI/I2C displays with ESPHome: SSD1306, ILI9xxx, ST7789, ePaper, and more. Draw text, shapes, images, and graphs with the display API."
+---
+
+ESPHome's `display` component powers a wide range of screens — from tiny 128×32 OLED modules to 4" 480×320 color TFT panels, ePaper displays, and HUB75 LED matrices. It exposes a unified rendering API via a `lambda:` function that receives a drawing context (`it`) and lets you paint text, shapes, images, graphs, and sensor values every refresh cycle. For interactive UIs, LVGL integration is also available.
+
+## Base Display Configuration
+
+All display platforms inherit these configuration variables.
+
+```yaml
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    id: my_display
+    rotation: 0
+    update_interval: 1s
+    lambda: |-
+      it.print(0, 0, id(my_font), "Hello, World!");
+```
+
+<ParamField path="id" type="ID" optional>
+  The ID used to reference this display. Required when multiple displays are configured.
+</ParamField>
+
+<ParamField path="update_interval" type="Time" optional>
+  How often the display lambda is called to redraw the screen. Defaults to `1s`. Set to `never` for manual updates only.
+</ParamField>
+
+<ParamField path="lambda" type="lambda" optional>
+  C++ code executed each refresh cycle. Receives `it` — the display rendering engine object.
+</ParamField>
+
+<ParamField path="rotation" type="int" optional>
+  Screen rotation in degrees: `0`, `90`, `180`, or `270`. Defaults to `0`.
+</ParamField>
+
+<ParamField path="auto_clear_enabled" type="boolean" optional>
+  If `true`, the display is cleared to background color before each lambda call. Defaults to `true` when a lambda or pages are configured.
+</ParamField>
+
+<ParamField path="show_test_card" type="boolean" optional>
+  If `true`, shows an RGB test card instead of running the lambda. Useful for verifying orientation and color mapping. Defaults to `false`.
+</ParamField>
+
+<ParamField path="pages" type="list" optional>
+  A list of named pages with individual lambdas. Switch between pages using display actions.
+</ParamField>
+
+---
+
+## Drawing API Reference
+
+All drawing methods are called on `it` inside the `lambda:`.
+
+### Basic Shapes
+
+```yaml
+lambda: |-
+  // Line from [0,0] to [100,50]
+  it.line(0, 0, 100, 50);
+
+  // Rectangle outline at [5,20], width=30, height=42
+  it.rectangle(5, 20, 30, 42);
+  // Filled rectangle
+  it.filled_rectangle(40, 40, 30, 42);
+
+  // Circle outline at center [20,40], radius=10
+  it.circle(20, 40, 10);
+  // Filled circle
+  it.filled_circle(80, 40, 10);
+
+  // Triangle outline
+  it.triangle(25, 5, 100, 5, 80, 25);
+  it.filled_triangle(115, 5, 95, 25, 125, 70);
+
+  // Regular polygon: filled hexagon inscribed in r=20 circle at [170,45]
+  it.filled_regular_polygon(170, 45, 20, EDGES_HEXAGON);
+  it.regular_polygon(170, 45, 40, EDGES_OCTAGON, VARIATION_FLAT_TOP);
+```
+
+### Colors
+
+```yaml
+lambda: |-
+  // Named color constants
+  it.fill(COLOR_ON);   // all pixels on
+  it.fill(COLOR_OFF);  // all pixels off
+
+  // RGB color on color displays
+  auto red   = Color(255, 0, 0);
+  auto green = Color(0, 255, 0);
+  auto blue  = Color(0, 0, 255);
+
+  it.filled_circle(30, 30, 15, red);
+  it.filled_circle(60, 30, 15, green);
+  it.filled_circle(90, 30, 15, blue);
+```
+
+### Color Configuration
+
+```yaml
+color:
+  - id: my_red
+    red: 100%
+    green: 20%
+    blue: 25%
+  - id: my_blue
+    hex: 0000FF
+```
+
+<ParamField path="red / green / blue / white" type="percentage" optional>
+  Channel brightness as a percentage (0–100%). Defaults to `100%`.
+</ParamField>
+<ParamField path="red_int / green_int / blue_int / white_int" type="int 0–255" optional>
+  Channel brightness as an integer.
+</ParamField>
+<ParamField path="hex" type="string" optional>
+  Color as a 6-digit hex string (e.g. `FF3340`).
+</ParamField>
+
+### Text Rendering
+
+```yaml
+lambda: |-
+  // Static text at [x=0, y=10]
+  it.print(0, 10, id(my_font), "Hello!");
+
+  // Right-aligned text
+  it.print(it.get_width(), 0, id(my_font), TextAlign::TOP_RIGHT, "Right");
+
+  // Formatted sensor value
+  it.printf(0, 20, id(my_font), "Temp: %.1f°C", id(temperature).state);
+
+  // With foreground and background colors (for anti-aliased fonts)
+  it.printf(0, 40, id(my_font), Color(255,255,255), COLOR_OFF,
+            TextAlign::TOP_LEFT, "%.1f", id(humidity).state);
+
+  // Binary sensor state
+  it.printf(0, 60, id(my_font), "Door: %s",
+            id(door_sensor).state ? "OPEN" : "CLOSED");
+```
+
+### Displaying Time
+
+```yaml
+lambda: |-
+  it.strftime(0, 0, id(my_font), "%H:%M:%S", id(homeassistant_time).now());
+```
+
+### Screen Clipping
+
+```yaml
+lambda: |-
+  it.start_clipping(40, 0, 140, 20);
+  it.print(0, 0, id(my_font), "Clipped text");
+  it.end_clipping();
+```
+
+### Displaying Images
+
+```yaml
+lambda: |-
+  it.image(0, 0, id(my_image));
+  // Right-aligned:
+  it.image(it.get_width(), 0, id(my_image), ImageAlign::TOP_RIGHT);
+```
+
+---
+
+## Display Pages
+
+Pages allow switching between multiple screen layouts.
+
+```yaml
+display:
+  - platform: ssd1306_i2c
+    id: my_display
+    pages:
+      - id: page_sensor
+        lambda: |-
+          it.printf(0, 0, id(f16), "%.1f°C", id(temp).state);
+      - id: page_time
+        lambda: |-
+          it.strftime(0, 0, id(f24), "%H:%M", id(ha_time).now());
+
+# Cycle pages on an interval
+interval:
+  - interval: 5s
+    then:
+      - display.page.show_next: my_display
+      - component.update: my_display
+```
+
+### Page Actions
+
+```yaml
+# Show next/previous page (wraps around)
+- display.page.show_next: my_display
+- display.page.show_previous: my_display
+
+# Show a specific page
+- display.page.show: page_sensor
+
+# Conditional page
+- display.page.show: !lambda |-
+    return id(alarm_active).state ? id(page_alarm) : id(page_sensor);
+```
+
+### `display.is_displaying_page` Condition
+
+```yaml
+on_...:
+  if:
+    condition:
+      display.is_displaying_page: page_sensor
+    then:
+      - logger.log: "Sensor page active"
+```
+
+### `on_page_change` Trigger
+
+```yaml
+display:
+  - platform: ...
+    on_page_change:
+      - from: page_sensor
+        to: page_time
+        then:
+          - logger.log: "Switched to time page"
+```
+
+---
+
+## Popular Display Platforms
+
+<CardGroup cols={2}>
+  <Card title="SSD1306 (OLED)" icon="monitor">
+    128×64 or 128×32 monochrome OLED over I²C or SPI. The most common small display for DIY projects.
+  </Card>
+  <Card title="ILI9xxx / ST7789 (TFT)" icon="monitor">
+    Color TFT LCD panels ranging from 1.8" to 4". SPI interface, up to 320×480 resolution.
+  </Card>
+  <Card title="Waveshare ePaper" icon="file-text">
+    E-paper displays with ultra-low power and sunlight readability. Slow refresh but persistent image without power.
+  </Card>
+  <Card title="MAX7219 (7-Segment)" icon="hash">
+    Daisy-chained 7-segment or 8×8 LED matrix displays driven by SPI.
+  </Card>
+  <Card title="LCD Display (HD44780)" icon="terminal">
+    Classic character LCD modules (16×2, 20×4) over I²C or parallel bus.
+  </Card>
+  <Card title="MIPI SPI / RGB / DSI" icon="layers">
+    High-resolution TFT panels using MIPI interfaces. Supports ESP32-S3 and ESP32-P4 with PSRAM.
+  </Card>
+  <Card title="Nextion" icon="layout">
+    Serial display with its own MCU for graphics. ESPHome sends commands and reads touch events.
+  </Card>
+  <Card title="HUB75 LED Matrix" icon="grid">
+    Addressable RGB LED matrix panels (P2.5, P3, P4, P5) driven directly from ESP32.
+  </Card>
+</CardGroup>
+
+## Test Card
+
+If your display looks wrong (flipped, wrong colors, rotated), use the built-in test card:
+
+```yaml
+display:
+  - platform: ili9xxx
+    model: ILI9341
+    show_test_card: true
+```
+
+The test card shows color gradient bars (R/G/B), corner markers, and the 0,0 origin indicator to help diagnose orientation and color-channel mapping issues.
+
+<Warning>
+  `show_test_card: true` ignores any `lambda:` content. Remove or set to `false` before deploying to production.
+</Warning>

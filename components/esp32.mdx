@@ -1,0 +1,239 @@
+---
+title: "ESP32 Platform Configuration in ESPHome"
+sidebarTitle: "ESP32"
+description: "Configure ESP32 platform in ESPHome: board selection, framework (Arduino vs ESP-IDF), flash mode, partition tables, and toolchain options."
+---
+
+The `esp32:` component provides all platform-specific configuration for the large family of ESP32 microcontrollers supported by ESPHome. Espressif's ESP32 line spans dual-core Xtensa chips, RISC-V single-core variants, high-performance compute chips, and everything in between — each with different peripheral sets, CPU speeds, and wireless capabilities. The most important settings are `variant` (which chip you have) and `framework` (the underlying build system, ESP-IDF or Arduino). ESP-IDF is the default and recommended choice for all variants.
+
+## Minimal Example
+
+```yaml
+esp32:
+  variant: esp32s3
+```
+
+```yaml
+# Classic ESP32 with explicit framework
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+```
+
+## Configuration Variables
+
+<ParamField path="variant" type="string">
+  Selects the ESP32 chip/MCU variant. Must match the physical hardware. When specified without a `board`, ESPHome automatically selects a standard Espressif devkit board for that variant.
+
+  Options: `esp32`, `esp32s2`, `esp32s3`, `esp32c2`, `esp32c3`, `esp32c5`, `esp32c6`, `esp32c61`, `esp32h2`, `esp32p4`
+</ParamField>
+
+<ParamField path="board" type="string">
+  PlatformIO board ID. Affects pin aliases and some internal defaults. No longer recommended — use `variant` instead. At least one of `board` or `variant` must be specified; if both are given, they must agree on the chip variant.
+</ParamField>
+
+<ParamField path="flash_size" type="string">
+  Flash memory size of the module. Defaults to `4MB`. Specifying a size larger than what is physically present will cause boot failures.
+
+  Options: `2MB`, `4MB`, `8MB`, `16MB`, `32MB`
+</ParamField>
+
+<ParamField path="cpu_frequency" type="string">
+  CPU frequency. Defaults to the maximum for the variant. If a device resets or hangs at the default frequency, try reducing (some OEM single-core ESP32 modules are only stable at `160MHz`).
+
+  - ESP32/S2/S3/C5: `80MHz`, `160MHz`, `240MHz`
+  - ESP32-C2: `80MHz`, `120MHz`
+  - ESP32-C3: `80MHz`, `160MHz`
+  - ESP32-C6/C61: `80MHz`, `120MHz`, `160MHz`
+  - ESP32-H2: `16MHz`–`96MHz`
+  - ESP32-P4: `40MHz`, `360MHz`, `400MHz`
+</ParamField>
+
+<ParamField path="partitions" type="filename or list">
+  Custom partition table. Provide a path to a CSV file for full control, or a list of partition definitions to append to the auto-generated table. See [Partitions](#partitions) below.
+</ParamField>
+
+<ParamField path="framework" type="mapping">
+  Framework configuration. See [Framework](#framework) below.
+</ParamField>
+
+<ParamField path="watchdog_timeout" type="Time">
+  ESP-IDF task watchdog timeout. If a subscribed task fails to feed the watchdog within this period, the device reboots. Range: `5s`–`60s`. Defaults to `5s`. OTA updates temporarily raise this to `15s` when needed.
+</ParamField>
+
+<ParamField path="toolchain" type="string">
+  Build toolchain. Options: `platformio` (default), `esp-idf`. Can also be set via the `--toolchain` CLI flag (which takes precedence over this setting).
+</ParamField>
+
+<ParamField path="engineering_sample" type="boolean">
+  **ESP32-P4 only.** Set to `true` for engineering sample silicon (chip revision &lt; 3.0). Defaults to `false`.
+</ParamField>
+
+## Framework
+
+ESPHome supports two frameworks for ESP32 compilation:
+
+### ESP-IDF (Recommended)
+
+Espressif's native development framework. Required for ESP32-C2, C5, C6, C61, H2, and P4. Default for all variants.
+
+```yaml
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+    version: recommended
+```
+
+### Arduino
+
+Arduino API compatibility layer built on top of ESP-IDF. Available for classic ESP32, C3, S2, and S3.
+
+```yaml
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+    version: recommended
+```
+
+### Framework Configuration Variables
+
+<ParamField path="type" type="string">
+  Framework type: `esp-idf` (default) or `arduino`.
+</ParamField>
+
+<ParamField path="version" type="string">
+  Framework version. `recommended` (default), `latest` (newest release), or `dev` (latest commit). Or specify an exact release tag (e.g. `5.3.1`).
+</ParamField>
+
+<ParamField path="sdkconfig_options" type="mapping">
+  **ESP-IDF only.** Custom `sdkconfig` options injected into the build. For advanced SDK tuning.
+</ParamField>
+
+<ParamField path="log_level" type="string">
+  Framework log level (separate from ESPHome's logger). One of `NONE`, `ERROR` (default), `WARN`, `INFO`, `DEBUG`, `VERBOSE`.
+</ParamField>
+
+<ParamField path="components" type="list">
+  IDF components to add from the [ESP Component Registry](https://components.espressif.com/). Use shorthand `owner/component@version` or advanced mapping with `name`, `source`, `ref`, and `path`.
+</ParamField>
+
+<ParamField path="advanced" type="mapping">
+  Fine-grained ESP-IDF optimization flags for IRAM/flash usage, TLS, FreeRTOS, LWIP, and debug features. See [Advanced Configuration](#advanced-configuration) below.
+</ParamField>
+
+## Partitions
+
+ESPHome auto-generates a partition table based on `flash_size`. Use `partitions` to customize:
+
+```yaml
+esp32:
+  partitions: my_partitions.csv  # Full custom table
+
+# Or append partitions to the auto-generated table:
+esp32:
+  partitions:
+    - name: my_data
+      type: data
+      subtype: spiffs
+      size: 0x10000
+```
+
+<ParamField path="name" type="string" required>
+  Partition name. Cannot be one of the reserved names: `nvs`, `app0`, `app1`, `otadata`, `eeprom`, `spiffs`, `phy_init`.
+</ParamField>
+
+<ParamField path="type" type="string or int" required>
+  Partition type: `app`, `data`, or a custom integer (0x40–0xFE).
+</ParamField>
+
+<ParamField path="subtype" type="string or int" required>
+  Partition subtype. For `data`: `nvs`, `nvs_keys`, `spiffs`, `coredump`, `efuse`, `fat`, `littlefs`. For `app`: `factory`, `test`.
+</ParamField>
+
+<ParamField path="size" type="int" required>
+  Size in bytes, 4 KB (0x1000) aligned.
+</ParamField>
+
+## ESP32 Variant Comparison
+
+| Variant | Core | Max MHz | Wi-Fi | Bluetooth | USB | Notable Features |
+|---------|------|---------|-------|-----------|-----|------------------|
+| ESP32 | Xtensa LX6 ×2 | 240 | 2.4 GHz | BT + BLE 4.2 | No (external) | Built-in Ethernet MAC |
+| ESP32-S2 | Xtensa LX7 ×1 | 240 | 2.4 GHz | None | USB OTG FS | 43 GPIOs, 2 DACs |
+| ESP32-S3 | Xtensa LX7 ×2 | 240 | 2.4 GHz | BLE 5.0 | USB OTG FS | AI vector, Micro Wake Word |
+| ESP32-C2 | RISC-V ×1 | 120 | 2.4 GHz | BLE 5.0 | No | Ultra-low-cost |
+| ESP32-C3 | RISC-V ×1 | 160 | 2.4 GHz | BLE 5.0 | USB Serial/JTAG | ESP8266 replacement |
+| ESP32-C5 | RISC-V ×1 | 240 | Dual-band (Wi-Fi 6) | BLE 5.0 | USB Serial/JTAG | 5 GHz Wi-Fi support |
+| ESP32-C6 | RISC-V ×1 | 160 | 2.4 GHz (Wi-Fi 6) | BLE 5.0 | USB Serial/JTAG | 802.15.4 (Thread/Zigbee) |
+| ESP32-H2 | RISC-V ×1 | 96 | None | BLE 5.3 | USB Serial/JTAG | Thread/Zigbee, no Wi-Fi |
+| ESP32-P4 | RISC-V ×2 | 400 | None (co-proc) | None (co-proc) | USB OTG HS | Edge compute, MIPI DSI/CSI |
+
+## Advanced Configuration
+
+<CodeGroup>
+
+```yaml Production (Optimized)
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    advanced:
+      # Memory saving options (enabled by default)
+      disable_libc_locks_in_iram: true   # Saves ~1.3 KB IRAM
+      disable_vfs_support_termios: true  # Saves ~1.8 KB flash
+      disable_vfs_support_select: true   # Saves ~2.7 KB flash
+      disable_vfs_support_dir: true      # Saves ~0.5 KB flash
+      disable_mbedtls_peer_cert: true    # Saves ~4 KB heap/connection
+      use_full_certificate_bundle: false # Saves ~51 KB flash
+      enable_ota_rollback: true          # Auto-rollback bad OTA
+```
+
+```yaml Extra IRAM (Original ESP32)
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    advanced:
+      sram1_as_iram: true  # +40 KB IRAM (requires ESP-IDF >= 5.1 bootloader)
+```
+
+```yaml JTAG Debugging
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    advanced:
+      disable_debug_stubs: false
+      disable_ocd_aware: false
+```
+
+</CodeGroup>
+
+## GPIO Notes (Classic ESP32)
+
+- `GPIO34`–`GPIO39`: **Input only** — cannot be used as outputs.
+- `GPIO32`–`GPIO39`: ADC-capable.
+- `GPIO0`: Strapping pin — must be HIGH at boot to avoid flash download mode.
+- `GPIO2`: Connected to the blue LED on `esp32dev` boards.
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    name: "Motion Sensor"
+    pin: GPIO23
+```
+
+<Note>
+  At least one of `board` or `variant` must be specified. Using `variant` alone (without `board`) is the recommended approach for new configurations.
+</Note>
+
+<Warning>
+  Specifying a `flash_size` larger than the physical flash on your module will cause the ESP32 to fail to boot. Check your module's datasheet before changing this value.
+</Warning>
+
+<Tip>
+  For devices that hang or reset unexpectedly after flashing, try reducing `cpu_frequency` to `160MHz`. Some OEM single-core ESP32 modules shipped in commercial products are only rated for 160 MHz despite being identified as standard dual-core ESP32.
+</Tip>

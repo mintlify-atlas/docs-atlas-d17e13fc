@@ -1,0 +1,166 @@
+---
+title: "ESP8266 Platform Configuration in ESPHome"
+sidebarTitle: "ESP8266"
+description: "Configure ESP8266 in ESPHome: supported boards, restore_from_flash, early_pin_init, and platform-specific limitations vs ESP32."
+---
+
+The `esp8266:` component provides platform-specific configuration for the ESP8266 microcontroller family — Espressif's original Wi-Fi SoC that still powers a huge number of smart home devices. While the ESP8266 is significantly more limited than the ESP32 (single core, ~40 KB usable RAM, no Bluetooth, fewer GPIOs), ESPHome supports it fully with the Arduino framework. If you're starting a new project, consider the ESP32-C3 as a modern, pin-compatible replacement that uses the same RISC-V UART-based programming workflow.
+
+## Minimal Example
+
+```yaml
+esphome:
+  name: my-8266-device
+
+esp8266:
+  board: nodemcuv2
+```
+
+## Configuration Variables
+
+<ParamField path="board" type="string" required>
+  The PlatformIO board identifier for your ESP8266 module. This affects pin aliases, flash size defaults, and some internal settings. Choose from the [ESPHome ESP8266 board list](https://registry.platformio.org/platforms/platformio/espressif8266/boards). When in doubt, use `esp01_1m` (generic 1 MB module) or `nodemcuv2` for NodeMCU v2 boards.
+</ParamField>
+
+<ParamField path="framework" type="mapping">
+  Options for the underlying Arduino framework version.
+
+  - **version** (*Optional*, string): Arduino ESP8266 framework version. `recommended` (default), `latest`, `dev`, or an explicit release tag from [esp8266/Arduino releases](https://github.com/esp8266/Arduino/releases).
+  - **source** (*Optional*, string): Custom PlatformIO package or git repository URL for patched framework versions.
+  - **platform_version** (*Optional*, string): Version of the [platformio/espressif8266](https://github.com/platformio/platform-espressif8266/releases/) PlatformIO platform package.
+</ParamField>
+
+<ParamField path="restore_from_flash" type="boolean">
+  When `true`, persistent component state (lights, switches, globals) is stored in flash memory and survives power cycles. Required for the `preferences:` flash_write_interval feature to function on ESP8266. Defaults to `false`.
+</ParamField>
+
+<ParamField path="board_flash_mode" type="string">
+  SPI flash access mode. The OTA process automatically detects and switches to the optimal mode. Defaults to `dout` (compatible with all chips).
+
+  Options: `qio`, `qout`, `dio`, `dout`
+</ParamField>
+
+<ParamField path="early_pin_init" type="boolean">
+  Whether pins are driven to their initial values immediately at boot (before any ESPHome code runs). Set to `false` when controlling switches or relays to prevent them from toggling briefly during firmware updates or restarts. Defaults to `true`.
+</ParamField>
+
+<ParamField path="enable_serial" type="boolean">
+  Force-enable the Arduino `Serial` object (UART0) for use in lambdas or external libraries. Most configurations do not need this — the `logger` and `uart` components handle UART initialization automatically. Defaults to auto-detection.
+</ParamField>
+
+<ParamField path="enable_serial1" type="boolean">
+  Force-enable the Arduino `Serial1` object (UART1, TX-only on ESP8266) for use in lambdas. Defaults to auto-detection.
+</ParamField>
+
+<ParamField path="enable_full_printf" type="boolean">
+  Enable full `FILE*`-based printf support. Saves ~1.6 KB of flash when disabled (default). Only set `true` if an external component requires `FILE*`-based printf. Defaults to `false`.
+</ParamField>
+
+<ParamField path="enable_scanf_float" type="boolean">
+  Enable float support in `sscanf()`. Disabled by default to save ~8 KB of flash. Set to `true` only if you use `sscanf()` with `%f` in lambda code. Defaults to `false`.
+</ParamField>
+
+## GPIO Pin Reference
+
+On generic ESP8266 boards, use `GPIO<n>` notation (e.g. `GPIO4`) to avoid confusion with board-specific silk-screen labels. Many NodeMCU boards use `D0`–`D8` labels that do **not** match the internal GPIO numbers.
+
+### Special and Reserved Pins
+
+| Pin | Function | Notes |
+|-----|----------|-------|
+| `GPIO0` | Boot mode + general IO | Must be HIGH at boot (boot from flash) |
+| `GPIO1` | UART0 TX | Used by logger by default |
+| `GPIO2` | Boot mode + general IO | Must be HIGH at boot; secondary UART TX |
+| `GPIO3` | UART0 RX | Used by logger by default |
+| `GPIO6`–`GPIO11` | Flash SPI bus | **Do not use** — connected to internal flash |
+| `GPIO12` | SPI MISO | |
+| `GPIO13` | SPI MOSI | |
+| `GPIO14` | SPI CLK | |
+| `GPIO15` | Boot mode + SPI CS | Must be LOW at boot |
+| `GPIO16` | RTC / Deep-sleep wakeup | Only pull-down, no pull-up |
+| `GPIO17` / `TOUT` | ADC input only | 0–1.0 V range |
+
+### Safe General-Purpose Pins
+
+`GPIO4`, `GPIO5`, `GPIO12`, `GPIO13`, `GPIO14` are the safest pins for general use — they have no boot-mode restrictions and no special hardware connections on most modules.
+
+## Complete Example with State Persistence
+
+```yaml
+esphome:
+  name: plug-01
+  friendly_name: "Smart Plug 01"
+
+esp8266:
+  board: esp01_1m
+  restore_from_flash: true
+  early_pin_init: false     # Prevent relay toggling on reboot
+
+preferences:
+  flash_write_interval: 1min
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+  baud_rate: 115200
+
+api:
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+switch:
+  - platform: gpio
+    pin: GPIO12
+    name: "Relay"
+    restore_mode: RESTORE_DEFAULT_OFF
+```
+
+## Boot Mode Detection
+
+The ESP8266 reads three strapping pins at reset to determine its boot mode:
+
+| `GPIO0` | `GPIO2` | `GPIO15` | Mode |
+|---------|---------|----------|------|
+| HIGH | HIGH | LOW | **Normal — boot from flash** |
+| LOW | HIGH | LOW | Download mode (UART flashing) |
+| ANY | ANY | HIGH | Boot from SD card |
+
+The first line of the serial output at 74800 baud (before the normal 115200 baud logger) shows `boot mode:(X,Y)` where the first number indicates the selected mode.
+
+## Crash Detection
+
+ESPHome automatically captures crash data (exception cause, fault PC, stack return addresses) from the previous boot and logs it at `ERROR` level on startup. No configuration is required.
+
+```
+[E][esp8266]: *** CRASH DETECTED ON PREVIOUS BOOT ***
+[E][esp8266]:   Reason: Exception - StoreProhibit (exccause=29)
+[E][esp8266]:   PC: 0x40212EC5
+[E][esp8266]:   BT0: 0x40212F5A
+```
+
+The ESPHome CLI automatically decodes these addresses to function names.
+
+## Electrical Characteristics
+
+| Parameter | Min | Typical | Max | Unit |
+|-----------|-----|---------|-----|------|
+| Operating temperature | -40 | — | 125 | °C |
+| Supply voltage (V_IO) | 2.5 | 3.3 | 3.6 | V |
+| Max GPIO current | — | — | 12 | mA |
+| Deep sleep current | — | 20 | — | µA |
+| Active mode current | — | 120 | — | mA |
+
+<Warning>
+  `GPIO6`–`GPIO11` are connected to the internal SPI flash bus. **Never use these as general-purpose GPIO** — doing so will corrupt the firmware and brick the device.
+</Warning>
+
+<Note>
+  Set `early_pin_init: false` on any device that controls a relay or switch. The default `true` value drives pins to their initial state before ESPHome code runs, which causes a brief unwanted toggle during firmware updates and restarts.
+</Note>
+
+<Tip>
+  ESP8266 devices have only ~40 KB of free RAM after boot, which can drop to under 20 KB with many components. Keep the number of active sensors minimal, use `logger.level: WARN` or higher, and set `api.max_connections: 2` to conserve memory.
+</Tip>

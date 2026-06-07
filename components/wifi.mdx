@@ -1,0 +1,204 @@
+---
+title: "Wi-Fi Component: Connect ESPHome to Your Network"
+sidebarTitle: "Wi-Fi"
+description: "Configure Wi-Fi on your ESPHome device: SSID, password, multiple networks, static IP, power save mode, and captive portal fallback."
+---
+
+The `wifi:` component connects your ESPHome device to a wireless access point. It is one of the two supported network transports (the other being [Ethernet](/components/ethernet/)) and must be present in every configuration that needs network access — ESPHome will fail validation if neither `wifi:` nor `ethernet:` is configured. You cannot use both simultaneously. For best performance and fastest reconnection times, assign a static IP address via `manual_ip`.
+
+## Minimal Example
+
+```yaml
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+```
+
+## Configuration Variables
+
+<ParamField path="ssid" type="string">
+  The SSID (network name) of the access point to connect to. Omit this key when using the `networks:` list for multi-network support.
+</ParamField>
+
+<ParamField path="password" type="string">
+  The WPA/WPA2/WPA3 password (PSK) for the network. Leave empty for open networks.
+</ParamField>
+
+<ParamField path="networks" type="list">
+  A list of access points to try. ESPHome connects to the one with the strongest signal. When this key is used, omit the top-level `ssid` and `password`. Each entry supports: `ssid`, `password`, `manual_ip`, `channel`, `bssid`, `hidden` (boolean), `priority` (int, -128 to 127), and `eap` for enterprise auth.
+</ParamField>
+
+<ParamField path="manual_ip" type="mapping">
+  Assign a static IP address. Skips DHCP negotiation, significantly improving connection speed and OTA reliability.
+
+  - **static_ip** (**Required**, IPv4): The device's static IP address.
+  - **gateway** (**Required**, IPv4): The router/gateway IP address.
+  - **subnet** (**Required**, IPv4): Subnet mask (e.g. `255.255.255.0`).
+  - **dns1** (*Optional*, IPv4): Primary DNS server.
+  - **dns2** (*Optional*, IPv4): Secondary DNS server.
+</ParamField>
+
+<ParamField path="ap" type="mapping">
+  Enable Access Point (fallback hotspot) mode. When both `ssid`/`password` and `ap:` are configured, the AP only activates when the station connection fails. Useful for first-time provisioning via Captive Portal.
+
+  - **ssid** (*Optional*, string): AP network name. Defaults to the device name.
+  - **password** (*Optional*, string): AP password. Leave empty for open AP.
+  - **channel** (*Optional*, int): Wi-Fi channel (1–14). Defaults to `1`.
+  - **ap_timeout** (*Optional*, Time): How long to try the station before enabling the AP. Set to `0s` to disable automatic fallback. Defaults to `90s`.
+</ParamField>
+
+<ParamField path="power_save_mode" type="string">
+  Controls the radio power saving level. `NONE` uses the most power but is most reliable. `HIGH` saves the most power but causes frequent disconnections. Defaults to `LIGHT` on ESP32, `NONE` on ESP8266.
+
+  Options: `NONE`, `LIGHT`, `HIGH`
+</ParamField>
+
+<ParamField path="fast_connect" type="boolean">
+  Skip the full scan and connect directly to the first matching AP. Dramatically reduces connection time and power consumption. The last successfully connected BSSID is tried first. Defaults to `false`.
+</ParamField>
+
+<ParamField path="min_auth_mode" type="string">
+  Minimum Wi-Fi security standard accepted. `WPA2` (recommended) rejects legacy WPA-only networks. `WPA3` is ESP32-only. Defaults to `WPA2` on ESP32, `WPA` on ESP8266.
+
+  Options: `WPA`, `WPA2`, `WPA3`
+</ParamField>
+
+<ParamField path="reboot_timeout" type="Time">
+  How long to wait without a Wi-Fi connection before rebooting. Set to `0s` to disable automatic reboots. Defaults to `15min`. Does not apply in AP-only mode.
+</ParamField>
+
+<ParamField path="output_power" type="string">
+  Transmit power in dBm (range: 8.5 dB to 20.5 dB). Default is 20 dB on ESP8266 — note that 20.5 dB may cause unexpected restarts on some modules.
+</ParamField>
+
+<ParamField path="domain" type="string">
+  mDNS domain suffix for OTA uploads. Defaults to `.local`, producing `<name>.local`.
+</ParamField>
+
+<ParamField path="use_address" type="string">
+  Override the target IP/hostname used for OTA uploads. Useful when migrating from a dynamic IP to a static one — point to the old address during the transition flash.
+</ParamField>
+
+<ParamField path="enable_btm" type="boolean">
+  **ESP32 only.** Enable 802.11v BSS Transition Management for native AP roaming. When enabled, `post_connect_roaming` is automatically disabled.
+</ParamField>
+
+<ParamField path="enable_rrm" type="boolean">
+  **ESP32 only.** Enable 802.11k Radio Resource Management for native AP selection guidance. When enabled, `post_connect_roaming` is automatically disabled.
+</ParamField>
+
+<ParamField path="post_connect_roaming" type="boolean">
+  After connecting, periodically scan for a better AP with the same SSID (up to 3 checks, every 5 minutes). Switches if a +10 dB improvement is found. Helps recover from suboptimal AP selection after power outages or AP reboots. Defaults to `true`.
+</ParamField>
+
+<ParamField path="passive_scan" type="boolean">
+  Perform Wi-Fi scans passively (listen-only) rather than actively sending probe requests. Defaults to `false`.
+</ParamField>
+
+<ParamField path="band_mode" type="string">
+  **ESP32-C5 only.** Select the frequency band. Options: `AUTO`, `2.4GHZ`, `5GHZ`. Defaults to `AUTO`.
+</ParamField>
+
+<ParamField path="enable_on_boot" type="boolean">
+  If `false`, Wi-Fi is not started at boot. Use `wifi.enable` action to start it later. Defaults to `true`.
+</ParamField>
+
+<ParamField path="on_connect" type="Automation">
+  Automation triggered when a Wi-Fi station connection is established.
+</ParamField>
+
+<ParamField path="on_disconnect" type="Automation">
+  Automation triggered when the Wi-Fi connection is dropped.
+</ParamField>
+
+## Advanced Example
+
+```yaml
+wifi:
+  networks:
+    - ssid: !secret primary_ssid
+      password: !secret primary_password
+      priority: 10
+    - ssid: !secret backup_ssid
+      password: !secret backup_password
+      priority: 5
+
+  manual_ip:
+    static_ip: 192.168.1.50
+    gateway: 192.168.1.1
+    subnet: 255.255.255.0
+    dns1: 1.1.1.1
+
+  power_save_mode: LIGHT
+  fast_connect: true
+  min_auth_mode: WPA2
+  reboot_timeout: 15min
+
+  # Fallback AP for captive portal provisioning
+  ap:
+    ssid: "Livingroom Fallback"
+    password: "MyFallbackPass"
+    ap_timeout: 60s
+
+  on_connect:
+    - logger.log: "Wi-Fi connected!"
+  on_disconnect:
+    - logger.log: "Wi-Fi lost!"
+```
+
+## Connecting to a Hidden Network
+
+```yaml
+wifi:
+  networks:
+    - ssid: MyHiddenNetwork
+      password: VerySafePassword
+      hidden: true
+```
+
+<Tip>
+  Set `hidden: true` for networks that don't broadcast their SSID. This forces the device to use hidden-network connection mode without scanning first. Note that ESPHome cannot select the strongest AP when `hidden: true` is set.
+</Tip>
+
+## Enterprise (WPA2-EAP) Authentication
+
+```yaml
+wifi:
+  networks:
+    - ssid: CorpNetwork
+      eap:
+        username: john.doe
+        password: !secret eap_password
+        ttls_phase_2: mschapv2
+```
+
+<Warning>
+  Do not set `min_auth_mode: WPA` unless you are connecting to a legacy router that cannot be upgraded. WPA/TKIP has known cryptographic vulnerabilities. Use `WPA2` (the default) for all modern networks.
+</Warning>
+
+<Note>
+  Be mindful of `reboot_timeout` when using `wifi.disable` action. If Wi-Fi stays off longer than the timeout, the device will reboot. Set `reboot_timeout: 0s` to disable the watchdog if you intentionally power-cycle the radio.
+</Note>
+
+## Wi-Fi Actions
+
+Use `wifi.disable` and `wifi.enable` in automations to control the radio on demand:
+
+```yaml
+on_...:
+  then:
+    - wifi.disable:
+    - delay: 30s
+    - wifi.enable:
+```
+
+Use `wifi.configure` to connect to a runtime-specified SSID:
+
+```yaml
+on_...:
+  then:
+    - wifi.configure:
+        ssid: "MyHomeNetwork"
+        password: "VerySafePassword"
+        save: true
+```

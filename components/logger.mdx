@@ -1,0 +1,163 @@
+---
+title: "Logger Component: Configure ESPHome Debug Output"
+sidebarTitle: "Logger"
+description: "Control ESPHome serial and network logging: set log levels per component, UART baud rate, and send logs to Home Assistant via the native API."
+---
+
+The `logger:` component controls all debug output from an ESPHome device. By default it emits messages at `DEBUG` severity or higher over the device's primary serial port, and also forwards logs to any connected native API client (such as Home Assistant or the ESPHome CLI). You can tune verbosity globally or per component tag, redirect logging to different hardware UARTs, and trigger automations when specific log messages are emitted. Getting the log level right is important: overly verbose settings slow down the device, while too-restrictive settings make debugging difficult.
+
+## Minimal Example
+
+```yaml
+logger:
+  level: DEBUG
+```
+
+## Configuration Variables
+
+<ParamField path="level" type="string">
+  The global log level. Messages below this severity are stripped from the compiled firmware at build time and cannot be enabled at runtime. Defaults to `DEBUG`.
+
+  Options (ascending severity): `VERY_VERBOSE`, `VERBOSE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `NONE`
+</ParamField>
+
+<ParamField path="initial_level" type="string">
+  The runtime log level applied at boot. Can be more restrictive than `level` (e.g. compile with `VERBOSE` but start at `ERROR`). Defaults to the value of `level`.
+</ParamField>
+
+<ParamField path="baud_rate" type="int">
+  Serial UART baud rate. Defaults to `115200`. Set to `0` to completely disable UART logging (logs will still appear via the native API/MQTT if configured).
+</ParamField>
+
+<ParamField path="hardware_uart" type="string">
+  Which hardware UART (or USB peripheral) to use for serial output. Defaults vary by chip — see the table below. Options include `UART0`, `UART1`, `UART2`, `UART0_SWAP` (ESP8266), `USB_CDC`, `USB_SERIAL_JTAG`.
+</ParamField>
+
+<ParamField path="logs" type="mapping">
+  Per-component or per-tag log level overrides. The tag key is the component's internal tag (e.g. `mqtt.component`, `wifi`). You cannot set a tag to a *more verbose* level than the global `level` (those messages were compiled out), but you can suppress tags to a higher severity.
+</ParamField>
+
+<ParamField path="runtime_tag_levels" type="boolean">
+  Enable runtime per-tag level changes. Auto-enabled when `logs` is configured or `logger.set_level` is used with a `tag`. Manually set to `true` if calling `set_log_level()` from a lambda. Defaults to `false` (auto-enabled as needed).
+</ParamField>
+
+<ParamField path="tx_buffer_size" type="int">
+  Serial transmit buffer size in bytes. Reduce if RAM is tight. Defaults to `512`.
+</ParamField>
+
+<ParamField path="task_log_buffer_size" type="int">
+  **ESP32, LibreTiny, nRF52 only.** Ring buffer for thread-safe logging from non-main tasks. Set to `0` to disable. Defaults to `768`.
+</ParamField>
+
+<ParamField path="esp8266_store_log_strings_in_flash" type="boolean">
+  **ESP8266 only.** Keep log format strings in flash via `PROGMEM` to save RAM. Defaults to `true`. Only change if you have a specific reason to keep format strings in RAM.
+</ParamField>
+
+<ParamField path="deassert_rts_dtr" type="boolean">
+  After opening the serial port, drive DTR and RTS low to reset the chip into application mode. Ensures boot log messages are captured when using hardware reset lines. Defaults to `false`.
+</ParamField>
+
+<ParamField path="on_message" type="Automation">
+  Triggered when a log message is emitted. Variables available: `message` (`const char*`), `level` (`int`), `tag` (`const char*`). Note: you cannot use `logger.log` or `ESP_LOGx` macros inside this automation.
+</ParamField>
+
+## Log Levels Reference
+
+| Level | Color | Description |
+|-------|-------|-------------|
+| `NONE` | — | No output at all |
+| `ERROR` | Red | Fatal issues preventing correct operation |
+| `WARN` | Yellow | Recoverable issues (invalid sensor readings, etc.) |
+| `INFO` | Green | Startup info and key state changes |
+| `DEBUG` | Cyan | General status, default for production use |
+| `VERBOSE` | Gray | Frequent state updates and sensor values |
+| `VERY_VERBOSE` | White | Raw bus traffic (I²C, SPI, UART bytes) |
+
+## Default UART Hardware Interfaces
+
+| Variant | Default Interface |
+|---------|------------------|
+| ESP8266 | `UART0` |
+| ESP32 | `UART0` |
+| ESP32-C3/C5/C6/C61/P4/S3 | `USB_SERIAL_JTAG` |
+| ESP32-S2 | `USB_CDC` |
+| RP2040 | `USB_CDC` |
+| nRF52 | `USB_CDC` |
+
+## Advanced Example
+
+```yaml
+logger:
+  level: VERBOSE           # Compile all VERBOSE messages into firmware
+  initial_level: INFO      # But only show INFO+ at runtime by default
+  baud_rate: 115200
+  hardware_uart: UART0
+  tx_buffer_size: 512
+
+  # Override per-component levels
+  logs:
+    wifi: VERBOSE          # Show WiFi debug regardless of initial_level
+    mqtt.component: WARN   # Suppress noisy MQTT component logs
+    mqtt.client: ERROR     # Only show MQTT client errors
+
+  on_message:
+    level: ERROR
+    then:
+      - mqtt.publish:
+          topic: home/errors
+          payload: !lambda |-
+            return std::string(tag) + ": " + std::string(message);
+```
+
+## `logger.log` Action
+
+Print a formatted message from an automation:
+
+```yaml
+on_button_press:
+  - logger.log:
+      format: "Button pressed! Temperature is %.1f°C"
+      args: ['id(temp_sensor).state']
+      level: INFO
+      tag: "button_handler"
+```
+
+## `logger.set_level` Action
+
+Change verbosity at runtime without reflashing:
+
+```yaml
+on_...:
+  - logger.set_level: DEBUG        # Change global level
+
+  - logger.set_level:              # Change per-tag level
+      level: VERBOSE
+      tag: wifi
+```
+
+## Forwarding Errors to MQTT
+
+```yaml
+logger:
+  level: DEBUG
+  on_message:
+    level: ERROR
+    then:
+      - mqtt.publish:
+          topic: esphome/errors
+          payload: !lambda |-
+            return "Triggered on_message with level " + to_string(level)
+                   + ", tag " + tag + " and message " + message;
+```
+
+<Warning>
+  `VERBOSE` and `VERY_VERBOSE` are designed for short debugging sessions only. Running a device at these levels continuously degrades performance, causes network timeouts, and may lead to instability. ESPHome logs a warning at boot when either level is active. Switch back to `DEBUG` once debugging is complete.
+</Warning>
+
+<Note>
+  As of ESPHome 2026.4.0, sensor state change messages were moved from `DEBUG` to `VERBOSE`. If you're running an older version, consider using `INFO` in production to avoid excessive serial traffic. On modern versions, `DEBUG` is appropriate for production use.
+</Note>
+
+<Tip>
+  Use `baud_rate: 0` to disable UART logging entirely on production devices while still receiving logs via the native API or MQTT. This frees up the UART for other uses (e.g. a connected sensor) and eliminates serial overhead.
+</Tip>

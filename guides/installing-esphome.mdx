@@ -1,0 +1,256 @@
+---
+title: "Installing ESPHome: pip, Docker, and Home Assistant Add-on"
+sidebarTitle: "Installation"
+description: "Install ESPHome using pip, Docker, or as a Home Assistant add-on. Covers requirements, virtual environments, and Docker image tags."
+---
+
+ESPHome can be installed in three ways: via **pip** (Python's package manager) on Windows, macOS, and Linux; via **Docker** for a self-contained, dependency-free environment; or as a **Home Assistant add-on** for the simplest possible setup. Choose the method that fits your workflow — the end result and feature set are identical across all three.
+
+## System Requirements
+
+| Requirement | Minimum | Notes |
+|---|---|---|
+| **Python** | 3.9+ | 3.11 or newer recommended |
+| **pip** | bundled with Python | Used to install ESPHome and dependencies |
+| **RAM** | 512 MB | 1 GB+ recommended for compiling |
+| **Disk** | 2 GB free | PlatformIO toolchain is downloaded on first build |
+| **OS** | Windows 10+, macOS 12+, Linux | Any reasonably modern distribution |
+
+<Note>
+  ESPHome requires Python 3.9 or newer. Check your version with `python3 --version` before installing. Python 3.11 or later is recommended for the best performance and compatibility.
+</Note>
+
+## Install via pip
+
+<CodeGroup>
+```bash Linux
+# 1. Confirm Python version
+python3 --version  # Should print Python 3.9 or newer
+
+# 2. Create a virtual environment
+python3 -m venv venv
+
+# 3. Activate the virtual environment
+source venv/bin/activate
+
+# 4. Install ESPHome
+pip3 install esphome
+
+# 5. Verify the installation
+esphome version
+```
+
+```bash macOS (pip)
+# 1. Confirm Python version (install from python.org if needed)
+python3 --version
+
+# 2. Create and activate a virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# 3. Install ESPHome
+pip install esphome
+
+# 4. Verify
+esphome version
+```
+
+```bash macOS (Homebrew)
+# Install via Homebrew (easiest on macOS)
+brew install esphome
+
+# Verify
+esphome version
+```
+
+```shell Windows
+# 1. Install Python from https://python.org — check "Add Python to PATH"
+# 2. Restart or log out and back in
+# 3. Open Command Prompt and install:
+pip3 install wheel
+pip3 install esphome
+
+# 4. Verify
+esphome version
+```
+</CodeGroup>
+
+A successful install prints something like:
+
+```text
+Version: 2025.8.0
+```
+
+### Using a Virtual Environment
+
+Using a Python virtual environment (`venv`) is strongly recommended on all platforms. It keeps ESPHome and its dependencies isolated from your system Python, avoids permission issues, and makes it easy to upgrade or remove ESPHome without affecting other tools.
+
+```bash
+# Create the environment (only once)
+python3 -m venv venv
+
+# Activate it (every new terminal session)
+source venv/bin/activate       # Linux / macOS bash/zsh
+# source venv/bin/activate.fish  # fish shell
+# source venv/bin/activate.csh   # csh/tcsh
+# venv\Scripts\activate.bat      # Windows CMD
+# venv\Scripts\Activate.ps1      # Windows PowerShell
+
+# You'll see (venv) in your prompt when active
+(venv) $ pip install esphome
+(venv) $ esphome version
+```
+
+<Warning>
+  Do **not** run `pip install` with `sudo` on Linux. Doing so installs packages into the system Python and can cause conflicts when your distribution's package manager updates Python. Always use a `venv` or a user-level install. See [DontBreakDebian](https://wiki.debian.org/DontBreakDebian) for details (the advice applies to all Linux distributions).
+</Warning>
+
+If you get a `command not found` error after installing, your local bin directory may not be on `PATH`:
+
+```bash
+export PATH=$PATH:$HOME/.local/bin
+
+# To make this permanent:
+echo 'export PATH=$PATH:$HOME/.local/bin' >> ~/.bashrc
+```
+
+## Install via Docker
+
+The official ESPHome Docker image (`ghcr.io/esphome/esphome`) bundles ESPHome and all its dependencies — no Python setup required. It supports **AMD64**, **ARM**, and **ARM64 (AArch64)** architectures.
+
+```bash
+# Pull the latest stable image
+docker pull ghcr.io/esphome/esphome
+
+# Verify
+docker run --rm ghcr.io/esphome/esphome version
+```
+
+### Docker Image Tags
+
+| Tag | Points to | Recommended use |
+|---|---|---|
+| `latest` / `stable` | Latest stable release | Manual, one-off pulls |
+| `YEAR.MONTH` (e.g., `2024.12`) | Latest patch in that release series | **Recommended** for auto-updates — no breaking changes within a series |
+| `beta` | Latest beta, or latest stable when no beta exists | Testing upcoming features |
+| `dev` | Daily build from the `dev` branch | Development and cutting-edge testing |
+
+<Note>
+  Avoid auto-updating containers pinned to `latest` or `stable`. ESPHome releases occasionally include breaking changes between major versions. Pin to a `YEAR.MONTH` tag and update manually after reviewing the release notes.
+</Note>
+
+### Docker Run (one-off commands)
+
+```bash
+# Run the setup wizard
+docker run --rm -v "${PWD}":/config -it ghcr.io/esphome/esphome wizard livingroom.yaml
+
+# Compile and flash via USB on Linux
+docker run --rm --privileged \
+  -v "${PWD}":/config \
+  --device=/dev/ttyUSB0 \
+  -it ghcr.io/esphome/esphome run livingroom.yaml
+
+# Stream logs wirelessly
+docker run --rm -v "${PWD}":/config -it ghcr.io/esphome/esphome logs livingroom.yaml
+```
+
+### Docker Compose
+
+For a persistent ESPHome Device Builder service, use Docker Compose:
+
+```yaml
+# docker-compose.yml
+services:
+  esphome:
+    container_name: esphome
+    image: ghcr.io/esphome/esphome:2024.12   # Pin to a release series
+    volumes:
+      - /path/to/esphome/config:/config
+      - /etc/localtime:/etc/localtime:ro
+    restart: always
+    privileged: true
+    network_mode: host
+    environment:
+      - USERNAME=admin
+      - PASSWORD=ChangeMe
+```
+
+Start with `docker compose up -d`, then open `http://<your-host>:6052`.
+
+<Tip>
+  Running ESPHome in Docker on **WSL2** can be 10× slower than native Linux when your config files live on a Windows-mounted drive (e.g., `/mnt/c/...`). Store your ESPHome configs inside the WSL2 filesystem instead — for example at `~/esphome/config` — to get native filesystem performance. See [esphome#12568](https://github.com/esphome/esphome/issues/12568) for more context.
+</Tip>
+
+<Note>
+  If you back your Docker config volume with an **NFS share**, mount it with the `nolock` option. Without it, PlatformIO (the underlying build system) may hang on startup. See [platformio-core#3089](https://github.com/platformio/platformio-core/issues/3089).
+</Note>
+
+## Install as a Home Assistant Add-on
+
+If you run Home Assistant OS or Home Assistant Supervised, the ESPHome Device Builder is available as a native add-on with one-click install:
+
+[![Open ESPHome add-on in Home Assistant](https://my.home-assistant.io/badges/supervisor_addon.svg)](https://my.home-assistant.io/redirect/supervisor_addon/?addon=5c53de3b_esphome&repository_url=https%3A%2F%2Fgithub.com%2Fesphome%2Fhome-assistant-addon)
+
+Or install it manually:
+
+<Steps>
+  <Step title="Open Add-on Store">
+    In Home Assistant, go to **Settings → Add-ons → Add-on Store**.
+  </Step>
+  <Step title="Find ESPHome Device Builder">
+    Search for **ESPHome Device Builder** in the store search box.
+  </Step>
+  <Step title="Install and Start">
+    Click the add-on, then click **Install**. Once installed, enable **Start on boot** and **Watchdog**, then click **Start**.
+  </Step>
+  <Step title="Open the Web UI">
+    Click **Open Web UI** to launch the ESPHome Device Builder dashboard.
+  </Step>
+</Steps>
+
+For a complete walkthrough of using the add-on to create and flash your first device, see the [Home Assistant Getting Started guide](/guides/getting-started-ha).
+
+## Verifying Your Installation
+
+Regardless of installation method, you should be able to run:
+
+```bash
+esphome version
+```
+
+And see output like:
+
+```text
+Version: 2025.8.0
+```
+
+If the command is not found after a pip install, ensure your virtual environment is activated or add `~/.local/bin` to your `PATH`.
+
+## Updating ESPHome
+
+<CodeGroup>
+```bash pip
+# Activate your virtual environment first
+source venv/bin/activate
+
+pip install --upgrade esphome
+esphome version
+```
+
+```bash Docker
+docker pull ghcr.io/esphome/esphome:2024.12  # Pull latest patch in your pinned series
+```
+
+```bash macOS Homebrew
+brew upgrade esphome
+esphome version
+```
+</CodeGroup>
+
+## Where to Go Next
+
+- **[Home Assistant Guide](/guides/getting-started-ha)** — flash your first device using the add-on web UI
+- **[Command Line Guide](/guides/getting-started-cli)** — use `esphome run`, `logs`, and `wizard` from your terminal
+- **[Component Reference](https://esphome.io/components/)** — browse sensors, outputs, displays, and more
+- **[Developer Site](https://developers.esphome.io)** — set up a local development environment for contributing to ESPHome
